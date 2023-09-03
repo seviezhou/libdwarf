@@ -88,12 +88,34 @@ _dwarf_object_read_random(int fd, char *buf, off_t loc,
         *errc = DW_DLE_SEEK_ERROR;
         return DW_DLV_ERROR;
     }
-    rcode = read(fd,buf,size);
-    if (rcode == -1 ||
-        (size_t)rcode != size) {
-        *errc = DW_DLE_READ_ERROR;
-        return DW_DLV_ERROR;
+    /*
+     *  On Linux, read() (and similar system calls) will transfer at most
+       0x7ffff000 MAX_RW_COUNT (2,147,479,552) bytes, returning the number of bytes
+       actually transferred.  (This is true on both 32-bit and 64-bit
+       systems.) 
+     *
+     */    
+    size_t byte_left = size;
+    while (byte_left > 0)
+    {
+        if (byte_left > 0x7ffff000)
+            size = 0x7ffff000;
+        else
+            size = byte_left;
+
+        // printf("+:%ld\n", size);
+        rcode = read(fd,buf,size);
+        if (rcode == -1 ||
+            (size_t)rcode != size) {
+            // printf("(:%ld,%ld\n", rcode, size);
+            *errc = DW_DLE_READ_ERROR;
+            return DW_DLV_ERROR;
+        }
+
+        buf += rcode;
+        byte_left -= size;
     }
+
     return DW_DLV_OK;
 }
 
