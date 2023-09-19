@@ -710,9 +710,10 @@ dwarf_macho_load_dwarf_sections(
         //     continue;
         // }
         /* Found DWARF, for now assume only one such. */
+        // load all sections, maco object has one but regular has multiple
         res = dwarf_macho_load_dwarf_section_details(mfp,
             segp,segi,errcode);
-        return res;
+        // return res;
     }
     return DW_DLV_OK;
 }
