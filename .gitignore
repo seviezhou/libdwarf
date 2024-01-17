@@ -1,0 +1,14 @@
+# Build directory
+build/*
+build-*/*
+.idea/*
+install/*
+cmake-build-debug*
+*.bc
+*.ll
+*.sh
+log.txt
+*.zip
+*.xz
+*.txt
+!CMakeLists.txt

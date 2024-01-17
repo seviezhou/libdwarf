@@ -31,6 +31,7 @@
 
 #include "config.h"
 #include <stdio.h>
+#include <stdlib.h>
 #ifdef HAVE_STDINT_H
 #include <stdint.h> /* for uintptr_t */
 #endif
@@ -125,29 +126,59 @@ _dwarf_find_CU_Context(Dwarf_Debug dbg,
         dis->de_cu_context->cc_next->cc_debug_offset == offset) {
         return dis->de_cu_context->cc_next;
     }
-    if (dis->de_cu_context != NULL &&
-        dis->de_cu_context->cc_debug_offset <= offset) {
-        for (cu_context = dis->de_cu_context;
-            cu_context != NULL;
-            cu_context = cu_context->cc_next) {
-            if (offset >= cu_context->cc_debug_offset &&
+
+    /*  The de_cu_context_array are sorted by their offsets. 
+        Binary search to find correct context entry. */
+    Dwarf_Signed low = 0;
+    Dwarf_Signed high = dis->de_cu_context_count;
+    Dwarf_Signed middle = 0;
+
+    while (low <= high) {
+        middle = (low + high) / 2;
+        cu_context = dis->de_cu_context_array[middle];
+        if (offset >= cu_context->cc_debug_offset &&
                 offset < cu_context->cc_debug_offset +
                 cu_context->cc_length + cu_context->cc_length_size
                 + cu_context->cc_extension_size) {
-                return cu_context;
-            }
-        }
-    }
-    for (cu_context = dis->de_cu_context_list;
-        cu_context != NULL;
-        cu_context = cu_context->cc_next) {
-        if (offset >= cu_context->cc_debug_offset &&
-            offset < cu_context->cc_debug_offset +
-            cu_context->cc_length + cu_context->cc_length_size
-            + cu_context->cc_extension_size) {
+            // printf("\ntest binary: %d\n", cu_context->cc_debug_offset);
+            // break;
             return cu_context;
-        }
+        } else if (offset < cu_context->cc_debug_offset) {
+            high = middle - 1;
+        } else if (offset >=
+            (cu_context->cc_debug_offset +
+            cu_context->cc_length + cu_context->cc_length_size
+                + cu_context->cc_extension_size)) {
+            low = middle + 1;
+        } 
     }
+
+    // cu_context = 0;
+    // if (dis->de_cu_context != NULL &&
+    //     dis->de_cu_context->cc_debug_offset <= offset) {
+    //     for (cu_context = dis->de_cu_context;
+    //         cu_context != NULL;
+    //         cu_context = cu_context->cc_next) {
+    //         if (offset >= cu_context->cc_debug_offset &&
+    //             offset < cu_context->cc_debug_offset +
+    //             cu_context->cc_length + cu_context->cc_length_size
+    //             + cu_context->cc_extension_size) {
+    //             printf("\ntest binary1: %d\n", cu_context->cc_debug_offset);
+    //             return cu_context;
+    //         }
+    //     }
+    // }
+    // for (cu_context = dis->de_cu_context_list;
+    //     cu_context != NULL;
+    //     cu_context = cu_context->cc_next) {
+    //     if (offset >= cu_context->cc_debug_offset &&
+    //         offset < cu_context->cc_debug_offset +
+    //         cu_context->cc_length + cu_context->cc_length_size
+    //         + cu_context->cc_extension_size) {
+    //         printf("\ntest binary1: %d\n", cu_context->cc_debug_offset);
+    //         return cu_context;
+    //     }
+    // }
     return NULL;
 }
 
@@ -1480,15 +1511,39 @@ insert_into_cu_context_list(Dwarf_Debug_InfoTypes dis,
         /*  First cu encountered. */
         dis->de_cu_context_list = icu_context;
         dis->de_cu_context_list_end = icu_context;
+
+        dis->de_cu_context_count = 0;
+        dis->de_cu_context_array_size = CU_CONTEXT_COUNT_DELTA;
+        dis->de_cu_context_array = (Dwarf_CU_Context*)
+            malloc(CU_CONTEXT_COUNT_DELTA * sizeof(Dwarf_CU_Context*));
+
+        dis->de_cu_context_array[dis->de_cu_context_count] = icu_context;
+        ++dis->de_cu_context_count;
+
         return;
     }
+
+    /* check for array full */
+    if (dis->de_cu_context_count + 1 == dis->de_cu_context_array_size) {
+        dis->de_cu_context_array_size += CU_CONTEXT_COUNT_DELTA;
+        dis->de_cu_context_array = (Dwarf_CU_Context*)
+            realloc(dis->de_cu_context_array, 
+                dis->de_cu_context_array_size * sizeof(Dwarf_CU_Context*));
+    }
+
+    /* insert new */
     eoffset = dis->de_cu_context_list_end->cc_debug_offset;
     if (eoffset < ioffset) {
         /* Normal case, add at end. */
         dis->de_cu_context_list_end->cc_next = icu_context;
         dis->de_cu_context_list_end = icu_context;
+
+        dis->de_cu_context_array[dis->de_cu_context_count] = icu_context;
+        ++dis->de_cu_context_count;
         return;
     }
+
+    unsigned int index = 0;
     hoffset = dis->de_cu_context_list->cc_debug_offset;
     if (hoffset > ioffset) {
         /* insert as new head. Unusual. */
@@ -1496,6 +1551,13 @@ insert_into_cu_context_list(Dwarf_Debug_InfoTypes dis,
         dis->de_cu_context_list = icu_context;
         dis->de_cu_context_list->cc_next = next;
         /*  No need to touch de_cu_context_list_end */
+
+        // Move the elements after the insertion spot
+        memmove(&dis->de_cu_context_array[index + 1], 
+            &dis->de_cu_context_array[index], 
+            sizeof(Dwarf_CU_Context*) * (dis->de_cu_context_count - index));
+        dis->de_cu_context_array[index] = icu_context;
+        ++dis->de_cu_context_count;
         return;
     }
     cur = dis->de_cu_context_list;
@@ -1514,9 +1576,16 @@ insert_into_cu_context_list(Dwarf_Debug_InfoTypes dis,
                 ASSERT: past non-null  */
             past->cc_next = icu_context;
             icu_context->cc_next = cur;
+
+            memmove(&dis->de_cu_context_array[index + 1], 
+                &dis->de_cu_context_array[index], 
+                sizeof(Dwarf_CU_Context*) * (dis->de_cu_context_count - index));
+            dis->de_cu_context_array[index] = icu_context;
+            ++dis->de_cu_context_count;            
             return;
         }
         past = cur;
+        index++;
     }
     /*  Impossible, for end, coffset (ie, eoffset) > ioffset  */
     /* NOTREACHED */

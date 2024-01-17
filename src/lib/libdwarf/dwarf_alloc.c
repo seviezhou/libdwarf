@@ -984,6 +984,7 @@ freecontextlist(Dwarf_Debug dbg, Dwarf_Debug_InfoTypes dis)
         dwarf_dealloc(dbg, context, DW_DLA_CU_CONTEXT);
     }
     dis->de_cu_context_list = 0;
+    free(dis->de_cu_context_array);
 }
 
 /*
