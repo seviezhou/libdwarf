@@ -1,6 +1,6 @@
 /*
 
-  Copyright (C) 2014-2014 David Anderson. All Rights Reserved.
+  Copyright (C) 2014-2023 David Anderson. All Rights Reserved.
 
   This program is free software; you can redistribute it
   and/or modify it under the terms of version 2.1 of the
@@ -27,14 +27,11 @@
 
 */
 
-
-
 /*  The following is based on
     The gdb online documentation at
     https://sourceware.org/gdb/onlinedocs/gdb/
     Appendix J, ".gdb_index section format".
 */
-
 
 /*  These are the two types .gdb_index uses.
     the offset_type (32 bits) and other fields
@@ -63,15 +60,15 @@ struct Dwarf_Gdbindex_array_instance_s {
     /* the in_object struct size. */
     Dwarf_Unsigned dg_entry_length;
     /* The size of a single field in the in-object struct */
-    int            dg_fieldlen;
+    unsigned       dg_fieldlen;
     /* The address_area type is a bit irregular. */
     enum gdbindex_type_e dg_type;
 };
 
 struct Dwarf_Gdbindex_s {
     Dwarf_Debug      gi_dbg;
-    Dwarf_Small    * gi_section_data;
-    Dwarf_Unsigned   gi_section_length;
+    Dwarf_Small    * gi_section_data;   /* dss_data */
+    Dwarf_Unsigned   gi_section_length; /* dss_size */
 
     Dwarf_Unsigned   gi_version;
     Dwarf_Unsigned   gi_cu_list_offset;
@@ -84,6 +81,4 @@ struct Dwarf_Gdbindex_s {
     struct Dwarf_Gdbindex_array_instance_s  gi_addressareahdr;
     struct Dwarf_Gdbindex_array_instance_s  gi_symboltablehdr;
     struct Dwarf_Gdbindex_array_instance_s  gi_cuvectorhdr;
-
-    Dwarf_Small *    gi_string_pool;
 };

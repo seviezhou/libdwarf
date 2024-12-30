@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2018, David Anderson
+Copyright (c) 2018-2023, David Anderson
 All rights reserved.
 
 Redistribution and use in source and binary forms, with
@@ -32,6 +32,23 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 #ifndef DWARF_MACHOREAD_H
 #define DWARF_MACHOREAD_H
+
+struct Dwarf_Universal_Arch_s;
+struct Dwarf_Universal_Head_s {
+    Dwarf_Unsigned au_magic;
+    Dwarf_Unsigned au_count;
+    Dwarf_Unsigned au_filesize; /* physical file size */
+    struct Dwarf_Universal_Arch_s * au_arches;
+
+};
+struct Dwarf_Universal_Arch_s {
+    Dwarf_Unsigned au_cputype;
+    Dwarf_Unsigned au_cpusubtype;
+    Dwarf_Unsigned au_offset;
+    Dwarf_Unsigned au_size;
+    Dwarf_Unsigned au_align;
+    Dwarf_Unsigned au_reserved;
+};
 
 #ifdef __cplusplus
 extern "C" {
@@ -94,7 +111,6 @@ struct generic_macho_section {
     Dwarf_Small*  loaded_data;
 };
 
-
 /*  ident[0] == 'M' means this is a macho header.
     ident[1] will be 1 indicating version 1.
     Other bytes in ident not defined, should be zero. */
@@ -103,12 +119,16 @@ typedef struct dwarf_macho_filedata_s {
     const char *     mo_path; /* libdwarf must free.*/
     int              mo_fd;
     int              mo_destruct_close_fd; /*aka: lib owns fd */
-    int              mo_is_64bit;
     Dwarf_Unsigned   mo_filesize;
+    Dwarf_Unsigned   mo_machine;
+    Dwarf_Unsigned   mo_flags;
+    Dwarf_Unsigned   mo_inner_offset; /* for universal inner */
     Dwarf_Small      mo_offsetsize; /* 32 or 64 section data */
     Dwarf_Small      mo_pointersize;
     int              mo_ftype;
-    Dwarf_Endianness mo_endian;
+    Dwarf_Small      mo_endian;
+    unsigned         mo_uninumber; /* for universal binary */
+    unsigned         mo_universal_count; /* for universal binary*/
     /*Dwarf_Small      mo_machine; */
     void (*mo_copy_word) (void *, const void *, unsigned long);
 
@@ -127,10 +147,10 @@ typedef struct dwarf_macho_filedata_s {
     struct generic_macho_section *mo_dwarf_sections;
 } dwarf_macho_object_access_internals_t;
 
-int dwarf_load_macho_header(
+int _dwarf_load_macho_header(
     dwarf_macho_object_access_internals_t * mfp,
     int *errcode);
-int dwarf_load_macho_commands(
+int _dwarf_load_macho_commands(
     dwarf_macho_object_access_internals_t * mfp,
     int *errcode);
 

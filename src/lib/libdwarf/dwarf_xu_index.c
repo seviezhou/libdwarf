@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2014-2020 David Anderson. All Rights Reserved.
+  Copyright (C) 2014-2021 David Anderson. All Rights Reserved.
 
   This program is free software; you can redistribute it
   and/or modify it under the terms of version 2.1 of the
@@ -63,54 +63,32 @@
     But we change things a little internally so both
     tables look zero-origin.
 */
-#include "config.h"
-#include <stdio.h>
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif /* HAVE_STDLIB_H */
-#include "dwarf_incl.h"
+
+#include <config.h>
+
+#include <string.h>  /* memcmp() memcpy() strcmp() */
+
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_opaque.h"
 #include "dwarf_alloc.h"
 #include "dwarf_error.h"
 #include "dwarf_util.h"
 #include "dwarf_xu_index.h"
-#include "dwarfstring.h"
+#include "dwarf_string.h"
 
 #define  HASHSIGNATURELEN 8
-#define  LEN32BIT   4
-
-#define TRUE 1
-#define FALSE 0
-
-/* The following actually assumes (as used here)
-    that t is 8 bytes (integer) while s is
-    also 8 bytes (Dwarf_Sig8 struct). */
-#ifdef WORDS_BIGENDIAN
-#define ASNAR(t,s,l)                   \
-    do {                                    \
-        unsigned tbyte = sizeof(t) - l;     \
-        if (sizeof(t) < l) {                \
-            _dwarf_error(dbg,error,DW_DLE_XU_HASH_INDEX_ERROR); \
-            return DW_DLV_ERROR;             \
-        }                                   \
-        t = 0;                              \
-        dbg->de_copy_word(((char *)&t)+tbyte ,&s[0],l);\
-    } while (0)
-#else /* LITTLE ENDIAN */
-#define ASNAR(t,s,l)                 \
-    do {                                \
-        t = 0;                          \
-        if (sizeof(t) < l) {            \
-            _dwarf_error(dbg,error,DW_DLE_XU_HASH_INDEX_ERROR); \
-            return DW_DLV_ERROR;         \
-        }                               \
-        dbg->de_copy_word(&t,&s[0],l);  \
-    } while (0)
-#endif /* end LITTLE- BIG-ENDIAN */
 
 /* zerohashkey used as all-zero-bits for comparison. */
 static const Dwarf_Sig8 zerohashkey;
 
-#if 0
+#if 0 /* dump_bytes */
 static void
 dump_bytes(char * msg,Dwarf_Small * start, long len)
 {
@@ -123,7 +101,7 @@ dump_bytes(char * msg,Dwarf_Small * start, long len)
     }
     printf("\n");
 }
-#endif
+#endif /*0*/
 
 /*  Precondition: headerline_offset + N*32 is within
     the section. */
@@ -132,7 +110,7 @@ fill_in_offsets_headerline(Dwarf_Debug dbg,
     Dwarf_Xu_Index_Header xuhdr,
     Dwarf_Unsigned headerline_offset,
     Dwarf_Unsigned num_sects,
-    Dwarf_Error *err)
+    Dwarf_Error *error)
 {
     Dwarf_Small *section_start = xuhdr->gx_section_data;
     Dwarf_Small *section_end = xuhdr->gx_section_data+
@@ -145,9 +123,9 @@ fill_in_offsets_headerline(Dwarf_Debug dbg,
         Dwarf_Unsigned v = 0;
 
         READ_UNALIGNED_CK(dbg,v, Dwarf_Unsigned,
-            data,LEN32BIT,
-            err,section_end);
-        data += LEN32BIT;
+            data,SIZEOFT32,
+            error,section_end);
+        data += SIZEOFT32;
         if (v > DW_SECT_RNGLISTS) {
             dwarfstring s;
 
@@ -158,16 +136,15 @@ fill_in_offsets_headerline(Dwarf_Debug dbg,
             dwarfstring_append(&s," is too high. "
                 "Sections 1-8 are listed in "
                 "DWARF5 Table 7.1.");
-            _dwarf_error_string(dbg, err, DW_DLE_XU_NAME_COL_ERROR,
+            _dwarf_error_string(dbg, error, DW_DLE_XU_NAME_COL_ERROR,
                 dwarfstring_string(&s));
             dwarfstring_destructor(&s);
             return DW_DLV_ERROR;
         }
-        xuhdr->gx_section_id[i] = v;
+        xuhdr->gx_section_id[i] = (unsigned long)v;
     }
     return DW_DLV_OK;
 }
-
 
 /*  Read in a cu or tu section and
     return overview information.
@@ -176,7 +153,7 @@ fill_in_offsets_headerline(Dwarf_Debug dbg,
     dwarf_init*() calls
     dwarf_get_xu_index_header() when
     the object file is opened and
-    dwarf_xu_header_free() is called
+    dwarf_dealloc_xu_header() is called
     by dwarf_finish(), there is
     no need for users to do this.
 
@@ -184,7 +161,7 @@ fill_in_offsets_headerline(Dwarf_Debug dbg,
     tu/cu functions oneself (possibly to print the
     .debug_cu_index or .debug_tu_index sections).
     then you will need to call dwarf_get_xu_index_header()
-    and eventually dwarf_xu_header_free().
+    and eventually dwarf_dealloc_xu_header().
 
     The libdwarf-internal data is kept in Dwarf_Debug
     fields de_cu_hashindex_data/de_tu_hashindex_data.
@@ -192,15 +169,15 @@ fill_in_offsets_headerline(Dwarf_Debug dbg,
 int
 dwarf_get_xu_index_header(Dwarf_Debug dbg,
     /* Pass in section_type "tu" or "cu" */
-    const char *     section_type,
-    Dwarf_Xu_Index_Header * xuptr,
-    Dwarf_Unsigned * version,
-    Dwarf_Unsigned * number_of_columns, /* L section count.*/
-    Dwarf_Unsigned * number_of_CUs,     /* U unit count    */
-    Dwarf_Unsigned * number_of_slots,   /* S slot count    */
+    const char     *section_type,
+    Dwarf_Xu_Index_Header *xuptr,
+    Dwarf_Unsigned *version,
+    Dwarf_Unsigned *number_of_columns, /* L section count.*/
+    Dwarf_Unsigned *number_of_CUs,     /* U unit count    */
+    Dwarf_Unsigned *number_of_slots,   /* S slot count    */
     /*  Standard says S > U DWARF5 sec 7.3.5.3 */
-    const char    ** section_name,
-    Dwarf_Error    * error)
+    const char    **section_name,
+    Dwarf_Error    *error)
 {
     Dwarf_Xu_Index_Header indexptr = 0;
     int res = DW_DLV_ERROR;
@@ -216,8 +193,16 @@ dwarf_get_xu_index_header(Dwarf_Debug dbg,
     Dwarf_Unsigned section_offsets_tab_offset = 0;
     Dwarf_Unsigned section_offsets_headerline_offset = 0;
     Dwarf_Unsigned section_sizes_tab_offset = 0;
-    unsigned datalen32 = LEN32BIT;
+    unsigned datalen32 = SIZEOFT32;
     Dwarf_Small *section_end = 0;
+
+    CHECK_DBG(dbg,error,"dwarf_get_xu_index_header()");
+    if (!section_type || !xuptr) {
+        _dwarf_error_string(0,error,DW_DLE_XU_TYPE_ARG_ERROR,
+            "DW_DLE_XU_TYPE_ARG_ERROR: section type or header "
+            "return pointer is not valid");
+        return DW_DLV_ERROR;
+    }
 
     if (!strcmp(section_type,"cu") ) {
         sect = &dbg->de_debug_cu_index;
@@ -429,6 +414,7 @@ dwarf_get_xu_index_header(Dwarf_Debug dbg,
         section_offsets_headerline_offset,
         num_secs,error);
     if (res != DW_DLV_OK) {
+        dwarf_dealloc(dbg,indexptr,DW_DLA_XU_INDEX);
         return res;
     }
     *xuptr             =     indexptr;
@@ -440,19 +426,18 @@ dwarf_get_xu_index_header(Dwarf_Debug dbg,
     return DW_DLV_OK;
 }
 
-
-
 int dwarf_get_xu_index_section_type(Dwarf_Xu_Index_Header xuhdr,
     /*  the function returns a pointer to
         the immutable string "tu" or "cu" via
         this arg. Do not free.  */
-    const char ** typename,
+    const char **typename,
     /*  the function returns a pointer to
         the immutable section name. Do not free.
         .debug_cu_index or .debug_tu_index */
-    const char ** sectionname,
-    UNUSEDARG Dwarf_Error * err)
+    const char **sectionname,
+    Dwarf_Error *error)
 {
+    (void)error;
     *typename    = &xuhdr->gx_type[0];
     *sectionname = xuhdr->gx_section_name;
     return DW_DLV_OK;
@@ -460,13 +445,13 @@ int dwarf_get_xu_index_section_type(Dwarf_Xu_Index_Header xuhdr,
 
 /*  Index values 0 to S-1 are valid. */
 int dwarf_get_xu_hash_entry(Dwarf_Xu_Index_Header xuhdr,
-    Dwarf_Unsigned    index,
+    Dwarf_Unsigned  index,
     /* returns the hash value. 64 bits. */
-    Dwarf_Sig8     *  hash_value,
+    Dwarf_Sig8     *hash_value,
 
     /* returns the index into rows of offset/size tables. */
-    Dwarf_Unsigned *  index_to_sections,
-    Dwarf_Error *     err)
+    Dwarf_Unsigned *index_to_sections,
+    Dwarf_Error    *error)
 {
     Dwarf_Debug dbg = xuhdr->gx_dbg;
     Dwarf_Small *hashtab = xuhdr->gx_section_data +
@@ -475,50 +460,47 @@ int dwarf_get_xu_hash_entry(Dwarf_Xu_Index_Header xuhdr,
         xuhdr->gx_index_table_offset;
     Dwarf_Small *indexentry = 0;
     Dwarf_Small *hashentry = 0;
-    Dwarf_Sig8 hashval;
     Dwarf_Unsigned indexval = 0;
     Dwarf_Small *section_end = xuhdr->gx_section_data +
         xuhdr->gx_section_length;
 
-    hashval  = zerohashkey;
-    if (xuhdr->gx_slots_in_hash > 0) {
-        if (index >= xuhdr->gx_slots_in_hash) {
-            dwarfstring m;
-
-            dwarfstring_constructor(&m);
-            dwarfstring_append_printf_u(&m,
-                "DW_DLE_XU_HASH_ROW_ERROR the index passed in, "
-                " %u, is greater than the number of slots "
-                " in the hash table.",index);
-            _dwarf_error_string(dbg, err,  DW_DLE_XU_HASH_ROW_ERROR,
-                dwarfstring_string(&m));
-            dwarfstring_destructor(&m);
-            return DW_DLV_ERROR;
-        }
-        hashentry = hashtab + (index * HASHSIGNATURELEN);
-        memcpy(&hashval,hashentry,sizeof(hashval));
-    } else {
-        _dwarf_error_string(dbg, err,  DW_DLE_XU_HASH_ROW_ERROR,
+    if (!xuhdr->gx_slots_in_hash) {
+        _dwarf_error_string(dbg, error,  DW_DLE_XU_HASH_ROW_ERROR,
             "DW_DLE_XU_HASH_ROW_ERROR the number of slots is zero"
             " which seems wrong.");
         return DW_DLV_ERROR;
     }
+    if (index >= xuhdr->gx_slots_in_hash) {
+        return DW_DLV_NO_ENTRY;
+    }
+    hashentry = hashtab + (index * HASHSIGNATURELEN);
+    memcpy(hash_value,hashentry,HASHSIGNATURELEN);
+    indexentry = indextab + (index * SIZEOFT32);
+    if (indexentry >= section_end ||
+        (indexentry+SIZEOFT32) > section_end) {
+        dwarfstring m;
 
-    indexentry = indextab + (index * LEN32BIT);
-    memcpy(hash_value,&hashval,sizeof(hashval));
-    READ_UNALIGNED_CK(dbg,indexval,Dwarf_Unsigned, indexentry,
-        LEN32BIT,
-        err,section_end);
-    indexentry += LEN32BIT;
-    if (indexval > xuhdr->gx_units_in_index) {
-        _dwarf_error(dbg, err,  DW_DLE_XU_HASH_INDEX_ERROR);
+        dwarfstring_constructor(&m);
+        dwarfstring_append_printf_u(&m,
+            "DW_DLE_XU_HASH_ROW_ERROR the index passed in, "
+            " %u, results in entry not fitting"
+            " in the hash table (past end of section)",index);
+        _dwarf_error_string(dbg, error,  DW_DLE_XU_HASH_ROW_ERROR,
+            dwarfstring_string(&m));
+        dwarfstring_destructor(&m);
         return DW_DLV_ERROR;
     }
-
+    READ_UNALIGNED_CK(dbg,indexval,Dwarf_Unsigned, indexentry,
+        SIZEOFT32,
+        error,section_end);
+    indexentry += SIZEOFT32;
+    if (indexval > xuhdr->gx_units_in_index) {
+        _dwarf_error(dbg, error,  DW_DLE_XU_HASH_INDEX_ERROR);
+        return DW_DLV_ERROR;
+    }
     *index_to_sections = indexval;
     return DW_DLV_OK;
 }
-
 
 static const char * dwp_secnames[] = {
 "No name for zero",
@@ -534,18 +516,26 @@ static const char * dwp_secnames[] = {
 };
 
 /*  Row 0 of the Table of Section Offsets,
-    columns 0 to L-1,  are the section id's,
+    columns 0 to N-1,  are the section id's,
     and names, such as DW_SECT_INFO (ie, 1)  */
 int
 dwarf_get_xu_section_names(Dwarf_Xu_Index_Header xuhdr,
     Dwarf_Unsigned  column_index,
-    Dwarf_Unsigned* number,
-    const char **   name,
-    Dwarf_Error *   err)
+    Dwarf_Unsigned *number,
+    const char    **name,
+    Dwarf_Error    *error)
 {
     Dwarf_Unsigned sec_num = 0;
-    Dwarf_Debug dbg = xuhdr->gx_dbg;
-
+    Dwarf_Debug dbg = 0;
+    if (!xuhdr) {
+        _dwarf_error_string(0,error,DW_DLE_XU_TYPE_ARG_ERROR,
+            "DW_DLE_XU_TYPE_ARG_ERROR: "
+            "Dwarf_Xu_Index_Header is NULL");
+        return DW_DLV_ERROR;
+    }
+    dbg = xuhdr->gx_dbg;
+/* FIXME */
+    CHECK_DBG(dbg,error,"dwarf_get_xu_section_names()");
     if ( column_index >= xuhdr->gx_column_count_sections) {
         dwarfstring s;
 
@@ -556,7 +546,7 @@ dwarf_get_xu_section_names(Dwarf_Xu_Index_Header xuhdr,
         dwarfstring_append_printf_u(&s," is too high. "
             "There are %u sections.",
             xuhdr->gx_column_count_sections);
-        _dwarf_error_string(dbg, err, DW_DLE_XU_NAME_COL_ERROR,
+        _dwarf_error_string(dbg, error, DW_DLE_XU_NAME_COL_ERROR,
             dwarfstring_string(&s));
         dwarfstring_destructor(&s);
         return DW_DLV_ERROR;
@@ -570,7 +560,6 @@ dwarf_get_xu_section_names(Dwarf_Xu_Index_Header xuhdr,
     return DW_DLV_OK;
 }
 
-
 /*  Rows 0 to U-1
     col 0 to L-1
     are section offset and length values from
@@ -583,26 +572,39 @@ int
 dwarf_get_xu_section_offset(Dwarf_Xu_Index_Header xuhdr,
     Dwarf_Unsigned  irow_index,
     Dwarf_Unsigned  column_index,
-    Dwarf_Unsigned* sec_offset,
-    Dwarf_Unsigned* sec_size,
-    Dwarf_Error *   err)
+    Dwarf_Unsigned *sec_offset,
+    Dwarf_Unsigned *sec_size,
+    Dwarf_Error    *error)
 {
     /* We use zero origin in the arrays, Users see
         one origin from the hash table. */
-    Dwarf_Debug dbg = xuhdr->gx_dbg;
+    Dwarf_Debug dbg = 0;
     /* get to base of tables first. */
-    Dwarf_Small *offsetrow =  xuhdr->gx_section_offsets_offset +
-        xuhdr->gx_section_data;
-    Dwarf_Small *sizerow =  xuhdr->gx_section_sizes_offset +
-        xuhdr->gx_section_data;
+    Dwarf_Small *offsetrow =  0;
+    Dwarf_Small *sizerow =  0;
     Dwarf_Small *offsetentry = 0;
     Dwarf_Small *sizeentry =  0;
     Dwarf_Unsigned offset = 0;
     Dwarf_Unsigned size = 0;
-    Dwarf_Unsigned column_count = xuhdr->gx_column_count_sections;
-    Dwarf_Small *section_end = xuhdr->gx_section_data +
-        xuhdr->gx_section_length;
+    Dwarf_Unsigned column_count = 0;
+    Dwarf_Small *section_end = 0;
     Dwarf_Unsigned row_index = irow_index-1;
+
+    if (!xuhdr) {
+        _dwarf_error_string(0,error,DW_DLE_XU_TYPE_ARG_ERROR,
+            "DW_DLE_XU_TYPE_ARG_ERROR: "
+            "Dwarf_Xu_Index_Header pointer is null");
+        return DW_DLV_ERROR;
+    }
+/* FIXME */
+    dbg = xuhdr->gx_dbg;
+    CHECK_DBG(dbg,error,"dwarf_get_xu_section_offset()");
+    sizerow =  xuhdr->gx_section_sizes_offset +
+        xuhdr->gx_section_data;
+    offsetrow =  xuhdr->gx_section_offsets_offset +
+        xuhdr->gx_section_data;
+    column_count = xuhdr->gx_column_count_sections;
+    section_end = xuhdr->gx_section_data + xuhdr->gx_section_length;
 
     if (!irow_index) {
         dwarfstring s;
@@ -614,7 +616,7 @@ dwarf_get_xu_section_offset(Dwarf_Xu_Index_Header xuhdr,
             "is zero, which is not a valid row in "
             " the offset-table or the size table as we think"
             " of them as 1-origin.");
-        _dwarf_error_string(dbg, err, DW_DLE_XU_NAME_COL_ERROR,
+        _dwarf_error_string(dbg, error, DW_DLE_XU_NAME_COL_ERROR,
             dwarfstring_string(&s));
         dwarfstring_destructor(&s);
         return DW_DLV_ERROR;
@@ -628,7 +630,7 @@ dwarf_get_xu_section_offset(Dwarf_Xu_Index_Header xuhdr,
             "row index of %u ",row_index);
         dwarfstring_append_printf_u(&s," is too high. "
             "Valid units must be < %u ",xuhdr->gx_units_in_index);
-        _dwarf_error_string(dbg, err, DW_DLE_XU_NAME_COL_ERROR,
+        _dwarf_error_string(dbg, error, DW_DLE_XU_NAME_COL_ERROR,
             dwarfstring_string(&s));
         dwarfstring_destructor(&s);
         return DW_DLV_ERROR;
@@ -644,7 +646,7 @@ dwarf_get_xu_section_offset(Dwarf_Xu_Index_Header xuhdr,
         dwarfstring_append_printf_u(&s," is too high. "
             "Valid column indexes  must be < %u ",
             xuhdr->gx_column_count_sections);
-        _dwarf_error_string(dbg, err, DW_DLE_XU_NAME_COL_ERROR,
+        _dwarf_error_string(dbg, error, DW_DLE_XU_NAME_COL_ERROR,
             dwarfstring_string(&s));
         dwarfstring_destructor(&s);
         return DW_DLV_ERROR;
@@ -652,44 +654,42 @@ dwarf_get_xu_section_offset(Dwarf_Xu_Index_Header xuhdr,
     /*  As noted above we have hidden the extra initial
         row from the offsets table so it is just
         0 to U-1. */
-    offsetrow = offsetrow + (row_index*column_count * LEN32BIT);
-    offsetentry = offsetrow + (column_index *  LEN32BIT);
+    offsetrow = offsetrow + (row_index*column_count * SIZEOFT32);
+    offsetentry = offsetrow + (column_index *  SIZEOFT32);
 
-    sizerow = sizerow + (row_index*column_count * LEN32BIT);
-    sizeentry = sizerow + (column_index *  LEN32BIT);
+    sizerow = sizerow + (row_index*column_count * SIZEOFT32);
+    sizeentry = sizerow + (column_index *  SIZEOFT32);
 
     {
         READ_UNALIGNED_CK(dbg,offset,Dwarf_Unsigned,
             offsetentry,
-            LEN32BIT,err,section_end);
-        offsetentry += LEN32BIT;
+            SIZEOFT32,error,section_end);
+        offsetentry += SIZEOFT32;
 
         READ_UNALIGNED_CK(dbg,size,Dwarf_Unsigned,
             sizeentry,
-            LEN32BIT,err,section_end);
-        sizeentry += LEN32BIT;
+            SIZEOFT32,error,section_end);
+        sizeentry += SIZEOFT32;
     }
     *sec_offset = offset;
     *sec_size =  size;
     return DW_DLV_OK;
 }
 
-
 static int
-_dwarf_search_fission_for_key(UNUSEDARG Dwarf_Debug dbg,
+_dwarf_search_fission_for_key(Dwarf_Debug dbg,
     Dwarf_Xu_Index_Header xuhdr,
     Dwarf_Sig8 *key_in,
     Dwarf_Unsigned * percu_index_out,
     Dwarf_Error *error)
 {
     Dwarf_Unsigned key = 0;
-    Dwarf_Unsigned primary_hash = 0;
-    Dwarf_Unsigned hashprime = 0;
     Dwarf_Unsigned slots =  xuhdr->gx_slots_in_hash;
-    Dwarf_Unsigned mask = slots -1;
     Dwarf_Sig8 hashentry_key;
     Dwarf_Unsigned percu_index = 0;
+    Dwarf_Unsigned h = 0;
 
+    (void)dbg;
     hashentry_key = zerohashkey;
     /*  Look for corrupt section data. */
     if (slots > xuhdr->gx_section_length) {
@@ -707,6 +707,9 @@ _dwarf_search_fission_for_key(UNUSEDARG Dwarf_Debug dbg,
         dwarfstring_destructor(&s);
         return DW_DLV_ERROR;
     }
+    if (!slots) {
+        return DW_DLV_NO_ENTRY;
+    }
     if ( (4*slots) > xuhdr->gx_section_length) {
         dwarfstring s;
 
@@ -722,34 +725,42 @@ _dwarf_search_fission_for_key(UNUSEDARG Dwarf_Debug dbg,
         dwarfstring_destructor(&s);
         return DW_DLV_ERROR;
     }
-    if (sizeof (key) != sizeof(key_in)) {
+    if (sizeof(key) != sizeof(*key_in)) {
         /* The hash won't work right in this case */
-        _dwarf_error(dbg, error, DW_DLE_XU_HASH_ROW_ERROR);
+        dwarfstring s;
+
+        dwarfstring_constructor(&s);
+        dwarfstring_append_printf_u(&s,
+            "DW_DLE_XU_HASH_ROW_ERROR "
+            "We require 8 byte keys, not %u byte keys",
+            sizeof(key));
+        _dwarf_error_string(dbg, error, DW_DLE_XU_HASH_ROW_ERROR,
+            dwarfstring_string(&s));
+        dwarfstring_destructor(&s);
+        return DW_DLV_ERROR;
     }
-    ASNAR(key,key_in,sizeof(*key_in));
-    primary_hash = key & mask;
-    hashprime =  (((key >>32) &mask) |1);
-    while (1) {
+    ASNARL(key,key_in,sizeof(*key_in));
+    /*  If we built a lookup based on hash key
+        this loop would not be necessary. */
+    for (h = 0; h < slots; ++h) {
         int res = 0;
 
         res = dwarf_get_xu_hash_entry(xuhdr,
-            primary_hash,&hashentry_key,
+            h,&hashentry_key,
             &percu_index,error);
         if (res != DW_DLV_OK) {
             return res;
         }
         if (percu_index == 0 &&
             !memcmp(&hashentry_key,&zerohashkey,sizeof(Dwarf_Sig8))) {
-            return DW_DLV_NO_ENTRY;
+            continue;
         }
         if (!memcmp(key_in,&hashentry_key,sizeof(Dwarf_Sig8))) {
             /* FOUND */
             *percu_index_out = percu_index;
             return  DW_DLV_OK;
         }
-        primary_hash = (primary_hash + hashprime) % slots;
     }
-    /* ASSERT: Cannot get here. */
     return DW_DLV_NO_ENTRY;
 }
 
@@ -769,7 +780,8 @@ _dwarf_search_fission_for_offset(Dwarf_Debug dbg,
 {
     Dwarf_Unsigned i = 0;
     Dwarf_Unsigned m = 0;
-    int secnum_index = -1;  /* N index */
+    Dwarf_Unsigned secnum_index = 0;
+    Dwarf_Bool     found_secnum = FALSE;
     int res = 0;
 
     for ( i = 0; i< xuhdr->gx_column_count_sections; i++) {
@@ -783,10 +795,11 @@ _dwarf_search_fission_for_offset(Dwarf_Debug dbg,
         }
         if (num == dfp_sect_num) {
             secnum_index = i;
+            found_secnum = TRUE;
             break;
         }
     }
-    if (secnum_index == -1) {
+    if (FALSE == found_secnum) {
         _dwarf_error(dbg,error,DW_DLE_FISSION_SECNUM_ERR);
         return DW_DLV_ERROR;
     }
@@ -853,12 +866,14 @@ transform_xu_to_dfp(Dwarf_Xu_Index_Header xuhdr,
     Dwarf_Debug_Fission_Per_CU *  percu_out,
     Dwarf_Error *error)
 {
-    unsigned i = 0;
-    unsigned l = 0;
-    unsigned n = 1;
-    unsigned max_cols = xuhdr->gx_column_count_sections;  /* L */
-    unsigned secnums[DW_FISSION_SECT_COUNT];
-    int res;
+    Dwarf_Unsigned i = 0;
+    Dwarf_Unsigned l = 0;
+    Dwarf_Unsigned n = 1;
+    Dwarf_Unsigned max_cols =
+        xuhdr->gx_column_count_sections;/* L */
+    Dwarf_Unsigned secnums[DW_FISSION_SECT_COUNT];
+    int res = 0;
+
     for ( i = 0; i< max_cols; i++) {
         /*  We could put the secnums array into xuhdr
             if recreating it is too slow. */
@@ -874,7 +889,7 @@ transform_xu_to_dfp(Dwarf_Xu_Index_Header xuhdr,
     for (l = 0; l < max_cols; ++l) {  /* L */
         Dwarf_Unsigned sec_off = 0;
         Dwarf_Unsigned sec_size = 0;
-        unsigned l_as_sect = secnums[l];
+        Dwarf_Unsigned l_as_sect = secnums[l];
         res = dwarf_get_xu_section_offset(xuhdr,n,l,
             &sec_off,&sec_size,error);
         if (res != DW_DLV_OK) {
@@ -905,6 +920,7 @@ _dwarf_get_debugfission_for_offset(Dwarf_Debug dbg,
     Dwarf_Unsigned sect_index_base = 0;
     Dwarf_Sig8 key;
 
+    CHECK_DBG(dbg,error,"_dwarf_get_debugfission_for_offset()");
     sect_index_base = DW_SECT_INFO;
     key = zerohashkey;
     sres = _dwarf_get_xuhdr(dbg,key_type, &xuhdr,error);
@@ -925,14 +941,23 @@ _dwarf_get_debugfission_for_offset(Dwarf_Debug dbg,
 }
 int
 dwarf_get_debugfission_for_key(Dwarf_Debug dbg,
-    Dwarf_Sig8 *  key  /* pointer to hash signature */,
-    const char * key_type  /*  "cu" or "tu" */,
+    Dwarf_Sig8  *key  /* pointer to hash signature */,
+    const char  *key_type  /*  "cu" or "tu" */,
     Dwarf_Debug_Fission_Per_CU *  percu_out,
-    Dwarf_Error *  error )
+    Dwarf_Error *error)
 {
     int sres = 0;
     Dwarf_Unsigned percu_index = 0;
     Dwarf_Xu_Index_Header xuhdr = 0;
+
+    CHECK_DBG(dbg,error,"dwarf_get_debugfission_for_key()");
+    if (!key || !key_type || !percu_out) {
+        _dwarf_error_string(0,error,DW_DLE_XU_TYPE_ARG_ERROR,
+            "DW_DLE_XU_TYPE_ARG_ERROR: dw_key, dw_keytype, or "
+            "Dwarf_Debug_Fission_Per_CU pointer* to return "
+            "is not valid");
+        return DW_DLV_ERROR;
+    }
 
     sres = _dwarf_load_debug_info(dbg,error);
     if (sres == DW_DLV_ERROR) {
@@ -959,7 +984,7 @@ dwarf_get_debugfission_for_key(Dwarf_Debug dbg,
 }
 
 void
-dwarf_xu_header_free(Dwarf_Xu_Index_Header indexptr)
+dwarf_dealloc_xu_header(Dwarf_Xu_Index_Header indexptr)
 {
     if (indexptr) {
         Dwarf_Debug dbg = indexptr->gx_dbg;

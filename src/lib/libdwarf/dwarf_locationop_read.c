@@ -28,21 +28,28 @@
 
 */
 
-#include "config.h"
-#include <stdio.h> /* for debugging only. */
+#include <config.h>
+
+#include <string.h> /* memcpy() memset() */
+
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
 #ifdef HAVE_STDINT_H
-#include <stdint.h> /* For uintptr_t */
+#include <stdint.h> /* uintptr_t */
 #endif /* HAVE_STDINT_H */
-#include "dwarf_incl.h"
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_opaque.h"
 #include "dwarf_alloc.h"
 #include "dwarf_error.h"
 #include "dwarf_util.h"
 #include "dwarf_loc.h"
-#include "dwarfstring.h"
-
-#define TRUE 1
-#define FALSE 0
-
+#include "dwarf_string.h"
 
 /*  Richard Henderson, on DW_OP_GNU_encoded_addr:
     The operand is an absolute address.
@@ -61,8 +68,9 @@ read_encoded_addr(Dwarf_Small *loc_ptr,
     Dwarf_Error *error)
 {
     int len = 0;
-    Dwarf_Small op = *loc_ptr;
+    Dwarf_Half op = *loc_ptr;
     Dwarf_Unsigned operand = 0;
+
     len++;
     if (!op) {
         op = address_size;
@@ -99,7 +107,6 @@ read_encoded_addr(Dwarf_Small *loc_ptr,
     *len_out = len;
     return DW_DLV_OK;
 }
-
 
 /*  Return DW_DLV_NO_ENTRY when at the end of
     the ops for this block (a single Dwarf_Loccesc
@@ -607,8 +614,18 @@ _dwarf_read_loc_expr_op(Dwarf_Debug dbg,
             it means the following is address-size.
             The address then follows immediately for
             that number of bytes. */
-        int length = 0;
-            int reares = read_encoded_addr(loc_ptr,dbg,
+            int length = 0;
+            int reares = 0;
+
+            if (loc_ptr >= section_end) {
+                _dwarf_error_string(dbg,error,
+                    DW_DLE_LOCEXPR_OFF_SECTION_END,
+                    "DW_DLE_LOCEXPR_OFF_SECTION_END "
+                    "at DW_OP_GNU_encoded_addr. "
+                    "Corrupt DWARF");
+                return DW_DLV_ERROR;
+            }
+            reares = read_encoded_addr(loc_ptr,dbg,
                 section_end,
                 address_size,
                 &operand1, &length,error);
@@ -637,7 +654,7 @@ _dwarf_read_loc_expr_op(Dwarf_Debug dbg,
             Relocation to a different object file is up to
             the user, per DWARF5 Page 41.
             http://www.dwarfstd.org/ShowIssue.php?issue=100831.1 */
-        Dwarf_Small iplen = offset_size;
+        Dwarf_Half iplen = offset_size;
         if (version_stamp == DW_CU_VERSION2 /* 2 */ ) {
             iplen = address_size;
         }
@@ -690,6 +707,13 @@ _dwarf_read_loc_expr_op(Dwarf_Debug dbg,
             dbg,error,section_end);
         offset = offset + leb128_length;
 
+        if (loc_ptr >= section_end) {
+            _dwarf_error_string(dbg,error,
+                DW_DLE_LOCEXPR_OFF_SECTION_END,
+                "DW_DLE_LOCEXPR_OFF_SECTION_END: Error reading "
+                "DW_OP_const_type/DW_OP_GNU_const_type content");
+            return DW_DLV_ERROR;
+        }
         /*  Next byte is size of following data block.  */
         operand2 = *loc_ptr;
         loc_ptr = loc_ptr + 1;
@@ -737,6 +761,13 @@ _dwarf_read_loc_expr_op(Dwarf_Debug dbg,
         READ_UNALIGNED_CK(dbg, operand1, Dwarf_Unsigned, loc_ptr, 4,
             error,section_end);;
         loc_ptr = loc_ptr + 4;
+        if (loc_ptr > section_end) {
+            _dwarf_error_string(dbg,error,
+                DW_DLE_LOCEXPR_OFF_SECTION_END,
+                "DW_DLE_LOCEXPR_OFF_SECTION_END: Error reading "
+                "DW_OP_GNU_parameter_ref.");
+            return DW_DLV_ERROR;
+        }
         offset = offset + 4;
         break;
     case DW_OP_addrx :           /* DWARF5 */
@@ -770,6 +801,52 @@ _dwarf_read_loc_expr_op(Dwarf_Debug dbg,
         }
         break;
     }
+    /*  See https://www.llvm.org/docs/
+        AMDGPUDwarfExtensionsForHeterogeneousDebugging.html */
+    case DW_OP_LLVM_form_aspace_address:
+    case DW_OP_LLVM_push_lane:
+    case DW_OP_LLVM_offset:
+    case DW_OP_LLVM_bit_offset:
+    case DW_OP_LLVM_undefined:
+    case DW_OP_LLVM_piece_end:
+        /* no operands on these */
+        break;
+    case DW_OP_LLVM_offset_uconst: /*uleb operand*/
+    case DW_OP_LLVM_call_frame_entry_reg: /*uleb operand*/
+        DECODE_LEB128_UWORD_LEN_CK(loc_ptr, operand1,leb128_length,
+            dbg,error,section_end);
+        offset = offset + leb128_length;
+        break;
+
+    case DW_OP_LLVM_aspace_implicit_pointer:
+        READ_UNALIGNED_CK(dbg, operand1, Dwarf_Unsigned, loc_ptr,
+            offset_size,error,section_end);
+        loc_ptr = loc_ptr + offset_size;
+        if (loc_ptr > section_end) {
+            _dwarf_error_string(dbg,error,
+                DW_DLE_LOCEXPR_OFF_SECTION_END,
+                "DW_DLE_LOCEXPR_OFF_SECTION_END: Error reading "
+                "DW_OP_LLVM_aspace_implicit_pointer.");
+            return DW_DLV_ERROR;
+        }
+
+        DECODE_LEB128_SWORD_LEN_CK(loc_ptr, operand2,leb128_length,
+            dbg,error,section_end);
+        offset = offset + leb128_length;
+        break;
+
+    case DW_OP_LLVM_aspace_bregx:
+    case DW_OP_LLVM_extend:
+    case DW_OP_LLVM_select_bit_piece:
+        DECODE_LEB128_UWORD_LEN_CK(loc_ptr, operand1,leb128_length,
+            dbg,error,section_end);
+        offset = offset + leb128_length;
+
+        DECODE_LEB128_UWORD_LEN_CK(loc_ptr, operand2,leb128_length,
+            dbg,error,section_end);
+        offset = offset + leb128_length;
+        break;
+
     default: {
         dwarfstring m;
         const char *atomname = 0;
@@ -808,13 +885,10 @@ _dwarf_read_loc_expr_op(Dwarf_Debug dbg,
         return DW_DLV_ERROR;
     }
     curr_loc->lr_atom = atom;
-    curr_loc->lr_raw1 =  operand1;
     curr_loc->lr_number =  operand1;
-    curr_loc->lr_raw2 =  operand2;
     curr_loc->lr_number2 = operand2;
     /*  lr_number 3 is a pointer to a value iff DW_OP_const or
         DW_OP_GNU_const_type */
-    curr_loc->lr_raw3 = operand3;
     curr_loc->lr_number3 = operand3;
     *nextoffset_out = offset;
     return DW_DLV_OK;

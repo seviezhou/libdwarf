@@ -25,11 +25,20 @@ Copyright 2014-2020 David Anderson. All rights reserved.
 
 */
 
-#include "globals.h"
-#include "naming.h"
-#include "esb.h"
-#include "esb_using_functions.h"
-#include "sanitized.h"
+#include <config.h>
+#include <stdio.h> /* FILE decl for dd_esb.h, printf etc */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dd_defined_types.h"
+#include "dd_checkutil.h"
+#include "dd_glflags.h"
+#include "dd_globals.h"
+#include "dd_naming.h"
+#include "dd_esb.h"
+#include "dd_esb_using_functions.h"
+#include "dd_sanitized.h"
 
 #include "print_sections.h"
 
@@ -49,8 +58,7 @@ dw_dlv_string(int res)
 }
 
 static int
-print_culist_array(UNUSEDARG Dwarf_Debug dbg,
-    Dwarf_Gdbindex  gdbindex,
+print_culist_array(Dwarf_Gdbindex  gdbindex,
     Dwarf_Unsigned *cu_list_len,
     Dwarf_Error * err)
 {
@@ -106,8 +114,7 @@ print_culist_array(UNUSEDARG Dwarf_Debug dbg,
 }
 
 static int
-print_types_culist_array(Dwarf_Debug dbg,
-    Dwarf_Gdbindex  gdbindex,
+print_types_culist_array(Dwarf_Gdbindex  gdbindex,
     Dwarf_Error * cular_err)
 {
     Dwarf_Unsigned list_len = 0;
@@ -117,7 +124,7 @@ print_types_culist_array(Dwarf_Debug dbg,
     res = dwarf_gdbindex_types_culist_array(gdbindex,
         &list_len,cular_err);
     if (res != DW_DLV_OK) {
-        print_error_and_continue(dbg,
+        print_error_and_continue(
             "dwarf_gdbindex_types_culist_array call failed",
             res,*cular_err);
         return res;
@@ -166,8 +173,7 @@ print_types_culist_array(Dwarf_Debug dbg,
 }
 
 static int
-print_addressarea(Dwarf_Debug dbg,
-    Dwarf_Gdbindex  gdbindex,
+print_addressarea(Dwarf_Gdbindex  gdbindex,
     Dwarf_Error * addra_err)
 {
     Dwarf_Unsigned list_len = 0;
@@ -175,7 +181,7 @@ print_addressarea(Dwarf_Debug dbg,
     int res = dwarf_gdbindex_addressarea(gdbindex,
         &list_len,addra_err);
     if (res != DW_DLV_OK) {
-        print_error_and_continue(dbg,
+        print_error_and_continue(
             "dwarf_gdbindex_addressarea failed",res,*addra_err);
         return res;
     }
@@ -222,7 +228,6 @@ print_addressarea(Dwarf_Debug dbg,
     return DW_DLV_OK;
 }
 
-
 const char *kind_list[] = {
     "unknown(0)  ",
     "type(1)     ",
@@ -235,7 +240,7 @@ const char *kind_list[] = {
 };
 
 static void
-get_kind_string(struct esb_s *out,unsigned k)
+get_kind_string(struct esb_s *out,Dwarf_Unsigned k)
 {
     if (k <= 7) {
         esb_append(out,sanitized(kind_list[k]));
@@ -244,9 +249,7 @@ get_kind_string(struct esb_s *out,unsigned k)
     esb_append(out, "kind-erroneous");
 }
 
-/*  NOTE: Returns pointer to static local string.
-    Use the returned pointer immediately or
-    things will not work properly.  */
+/*  NOTE: Returns string through esb pointer */
 static void
 get_cu_index_string(struct esb_s *out,
     Dwarf_Unsigned index,
@@ -263,12 +266,8 @@ get_cu_index_string(struct esb_s *out,
     return;
 }
 
-
-
-
 static int
-print_symtab_entry(Dwarf_Debug dbg,
-    Dwarf_Gdbindex gdbindex,
+print_symtab_entry(Dwarf_Gdbindex gdbindex,
     Dwarf_Unsigned index,
     Dwarf_Unsigned symnameoffset,
     Dwarf_Unsigned cuvecoffset,
@@ -336,7 +335,6 @@ print_symtab_entry(Dwarf_Debug dbg,
     for (ii = 0; ii < cuvec_len; ++ii ) {
         Dwarf_Unsigned attributes = 0;
         Dwarf_Unsigned cu_index = 0;
-        Dwarf_Unsigned reserved1 = 0;
         Dwarf_Unsigned symbol_kind = 0;
         Dwarf_Unsigned is_static = 0;
         struct esb_s   tmp_cuindx;
@@ -346,13 +344,13 @@ print_symtab_entry(Dwarf_Debug dbg,
             gdbindex,cuvecoffset,ii,
             &attributes,sym_err);
         if (res != DW_DLV_OK) {
-            print_error_and_continue(dbg,
+            print_error_and_continue(
                 "dwarf_gdbindex_cuvector_inner_attributes failed",
                 res,*sym_err);
             return res;
         }
         res = dwarf_gdbindex_cuvector_instance_expand_value(gdbindex,
-            attributes, &cu_index,&reserved1,&symbol_kind,
+            attributes, &cu_index,&symbol_kind,
             &is_static, sym_err);
         if (res != DW_DLV_OK) {
             struct esb_s msg;
@@ -417,14 +415,12 @@ print_symtab_entry(Dwarf_Debug dbg,
                 " static 0x%"    DW_PR_XZEROS DW_PR_DUx "\n",
                 ii,attributes,cu_index,symbol_kind,is_static);
         }
-
     }
     return DW_DLV_OK;
 }
 
 static int
-print_symboltable(Dwarf_Debug dbg,
-    Dwarf_Gdbindex  gdbindex,
+print_symboltable(Dwarf_Gdbindex  gdbindex,
     Dwarf_Unsigned culist_len,
     Dwarf_Error * symt_err)
 {
@@ -474,7 +470,7 @@ print_symboltable(Dwarf_Debug dbg,
             esb_destructor(&msg);
             return res;
         }
-        res = print_symtab_entry(dbg,gdbindex,i,
+        res = print_symtab_entry(gdbindex,i,
             symnameoffset,cuvecoffset,
             culist_len,symt_err);
         if (res != DW_DLV_OK) {
@@ -484,9 +480,6 @@ print_symboltable(Dwarf_Debug dbg,
     printf("\n");
     return DW_DLV_OK;
 }
-
-
-
 
 int
 print_gdb_index(Dwarf_Debug dbg,Dwarf_Error *err)
@@ -499,7 +492,6 @@ print_gdb_index(Dwarf_Debug dbg,Dwarf_Error *err)
     Dwarf_Unsigned symbol_table_offset = 0;
     Dwarf_Unsigned constant_pool_offset = 0;
     Dwarf_Unsigned section_size = 0;
-    Dwarf_Unsigned unused = 0;
     const char *section_name = 0; /* unused */
     Dwarf_Unsigned culist_len = 0;
     int res = 0;
@@ -516,7 +508,6 @@ print_gdb_index(Dwarf_Debug dbg,Dwarf_Error *err)
         &symbol_table_offset,
         &constant_pool_offset,
         &section_size,
-        &unused,
         &section_name,
         err);
     if (res == DW_DLV_NO_ENTRY) {
@@ -525,8 +516,9 @@ print_gdb_index(Dwarf_Debug dbg,Dwarf_Error *err)
         return res;
     }
     if (res == DW_DLV_ERROR) {
-        simple_err_return_msg_either_action(res,
-            "ERROR: .gdb_index not readable.");
+        printf(" ERROR: .gdb_index not readable  %s\n",
+            err?dwarf_errmsg(*err):"No details available");
+        glflags.gf_count_major_errors++;
         return res;
     }
     {
@@ -559,23 +551,22 @@ print_gdb_index(Dwarf_Debug dbg,Dwarf_Error *err)
         "0x%" DW_PR_XZEROS DW_PR_DUx "\n",
         section_size);
 
-
-    res = print_culist_array(dbg,gdbindex,&culist_len,err);
+    res = print_culist_array(gdbindex,&culist_len,err);
     if (res != DW_DLV_OK) {
-        dwarf_gdbindex_free(gdbindex);
+        dwarf_dealloc_gdbindex(gdbindex);
         return res;
     }
-    res = print_types_culist_array(dbg,gdbindex,err);
+    res = print_types_culist_array(gdbindex,err);
     if (res != DW_DLV_OK) {
-        dwarf_gdbindex_free(gdbindex);
+        dwarf_dealloc_gdbindex(gdbindex);
         return res;
     }
-    res = print_addressarea(dbg,gdbindex,err);
+    res = print_addressarea(gdbindex,err);
     if (res != DW_DLV_OK) {
-        dwarf_gdbindex_free(gdbindex);
+        dwarf_dealloc_gdbindex(gdbindex);
         return res;
     }
-    res = print_symboltable(dbg,gdbindex,culist_len,err);
-    dwarf_gdbindex_free(gdbindex);
+    res = print_symboltable(gdbindex,culist_len,err);
+    dwarf_dealloc_gdbindex(gdbindex);
     return res;
 }

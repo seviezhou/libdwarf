@@ -1,7 +1,6 @@
 /*
-
 Copyright (C) 2000, 2004, 2006 Silicon Graphics, Inc.  All Rights Reserved.
-Portions Copyright (C) 2011 David Anderson. All Rights Reserved.
+Portions Copyright (C) 2021-2023 David Anderson. All Rights Reserved.
 
   This program is free software; you can redistribute it
   and/or modify it under the terms of version 2.1 of the
@@ -27,8 +26,6 @@ Portions Copyright (C) 2011 David Anderson. All Rights Reserved.
   Floor, Boston MA 02110-1301, USA.
 
 */
-
-
 
 /*  The dwarf 2.0 standard dictates that only the following
     fields can be read when an unexpected augmentation string
@@ -59,9 +56,8 @@ Portions Copyright (C) 2011 David Anderson. All Rights Reserved.
     the augmented fields (not including the size of
     "length_of_augmented_fields" itself).
 
-    Handling of cie augmentation strings is necessarly a heuristic.
+    Handling of cie augmentation strings is necessarily a heuristic.
     See dwarf_frame.c for the currently known augmentation strings.
-
 
     ---START SGI-ONLY COMMENT:
     SGI-IRIX versions of cie or fde  were intended
@@ -76,7 +72,6 @@ Portions Copyright (C) 2011 David Anderson. All Rights Reserved.
     into the "_MIPS_eh_region", which describes
     the IRIX CC exception handling tables.
     ---END SGI-ONLY COMMENT
-
 
     GNU .eh_frame has an augmentation string of z[RLP]* (gcc 3.4)
     The similarity to IRIX 'z' (and proposed but never
@@ -102,6 +97,46 @@ Portions Copyright (C) 2011 David Anderson. All Rights Reserved.
 #define DW_FRAME_INSTR_OPCODE_SHIFT 6
 #define DW_FRAME_INSTR_OFFSET_MASK  0x3f
 
+/*  Frame description instructions expanded.
+    Accessed via a function.
+*/
+struct Dwarf_Frame_Instr_s {
+    /*  fp_op, if a base op, has the low 6 bits set zero here */
+    Dwarf_Small     fi_op;
+    /*  fp_instr_offset is within instructions */
+    Dwarf_Unsigned  fi_instr_offset;
+    Dwarf_Unsigned  fi_offset; /* frame offset */
+    /*  A string like "u","r", or "rsd" denoting the field
+        meanings. See the entire list of possibilities.
+        Never free. */
+    const char     *fi_fields;
+
+    /*  letter r and u both use u struct elements. */
+    Dwarf_Unsigned  fi_u0;
+    Dwarf_Unsigned  fi_u1;
+    Dwarf_Unsigned  fi_u2; /* LLVM extension */
+    Dwarf_Signed    fi_s0;
+    Dwarf_Signed    fi_s1;
+    Dwarf_Unsigned  fi_code_align_factor;
+    Dwarf_Signed    fi_data_align_factor;
+
+    Dwarf_Block     fi_expr;
+    /*  Used to prepare a list, which
+        is then turned into array and this zeroed. */
+    struct Dwarf_Frame_Instr_s *fi_next;
+};
+typedef struct Dwarf_Frame_Instr_s * Dwarf_Frame_Instr;
+
+struct Dwarf_Frame_Instr_Head_s {
+    /*  fp_op, if a base op, has the low 6 bits set zero here */
+    Dwarf_Debug     fh_dbg;
+    Dwarf_Cie       fh_cie;
+
+    /* array of pointers to Dwarf_Frame_Instr_s */
+    Dwarf_Frame_Instr *fh_array;
+    Dwarf_Unsigned     fh_array_count;
+};
+
 /*
     This struct denotes the rule for a register in a row of
     the frame table.  In other words, it is one element of
@@ -110,7 +145,7 @@ Portions Copyright (C) 2011 David Anderson. All Rights Reserved.
 struct Dwarf_Reg_Rule_s {
 
     /*  Is a flag indicating whether the rule includes the offset
-        field, ie whether the ru_offset field is valid or not.
+        field, ie whether the ru_soffset field is valid or not.
         Applies only if DW_EXPR_OFFSET or DW_EXPR_VAL_OFFSET.
         It is important, since reg+offset (offset of 0)
         is different from
@@ -118,33 +153,48 @@ struct Dwarf_Reg_Rule_s {
         given by the sum of register contents plus offset to get the
         value'. whereas the latter
         means 'the value is in the register'.
+    */
+    Dwarf_Sbyte ru_is_offset;
 
-        The 'register' numbers are either real registers (ie, table
-        columns defined as real registers) or defined entries that are
-        not really hardware registers, such as DW_FRAME_SAME_VAL or
-        DW_FRAME_CFA_COL.  */
-    Dwarf_Sbyte ru_is_off;
-
-    /*  DW_EXPR_OFFSET (0, DWARF2)
-        DW_EXPR_VAL_OFFSET 1 (dwarf2/3)
-        DW_EXPR_EXPRESSION 2  (dwarf2/3)
+    /*  This has to do with evaluating register
+        instructions, not with printing frame instruction.
+        DW_EXPR_OFFSET         0 ( DWARF2)
+        DW_EXPR_VAL_OFFSET     1 (dwarf2/3)
+        DW_EXPR_EXPRESSION     2 (dwarf2/3)
         DW_EXPR_VAL_EXPRESSION 3 (dwarf2/3)
-        See dwarf_frame.h. */
+        DW_EXPR_ARGS_SIZE  4     (GNU)
+    */
     Dwarf_Sbyte ru_value_type;
 
-    /* Register involved in this rule. */
-    Dwarf_Half ru_register;
+    /*  Register involved in this rule, real or non-real-register.
+        ru_value_type is DW_EXPR_OFFSET or DW_EXPR_VAL_OFFSET.
+    */
+    Dwarf_Unsigned ru_register;
 
-    /*  Offset to add to register, if indicated by ru_is_offset
-        and if DW_EXPR_OFFSET or DW_EXPR_VAL_OFFSET.
-        If DW_EXPR_EXPRESSION or DW_EXPR_VAL_EXPRESSION
-        this is DW_FORM_block block-length, not offset. */
-    Dwarf_Unsigned ru_offset_or_block_len;
+    /*  Offset to add to register, if indicated by ru_is_offset.
+        ru_value_type is DW_EXPR_OFFSET */
+    Dwarf_Signed ru_offset;
+    Dwarf_Unsigned ru_args_size; /* DW_CFA_GNU_args_size */
+    /*  If ru_value_type is DW_EXPR_EXPRESSION
+        or DW_EXPR_VAL_EXPRESSION this is filled in. */
+    Dwarf_Block    ru_block;
 
-    /*  For DW_EXPR_EXPRESSION DW_EXPR_VAL_EXPRESSION these is set,
-        else 0. */
-    Dwarf_Small *ru_block;
 };
+/* Internal use only */
+typedef struct Dwarf_Regtable_Entry3_s_i {
+    Dwarf_Small     dw_offset_relevant;
+    Dwarf_Small     dw_value_type;
+    Dwarf_Unsigned  dw_regnum;
+    Dwarf_Unsigned  dw_offset;
+    Dwarf_Unsigned  dw_args_size; /* Not dealt with.  */
+    Dwarf_Block     dw_block;
+} Dwarf_Regtable_Entry3_i;
+/* Internal use only */
+typedef struct Dwarf_Regtable3_s_i {
+    Dwarf_Regtable_Entry3_i  rt3_cfa_rule;
+    Dwarf_Unsigned           rt3_reg_table_size;
+    Dwarf_Regtable_Entry3_i *rt3_rules;
+} Dwarf_Regtable3_i;
 
 typedef struct Dwarf_Frame_s *Dwarf_Frame;
 
@@ -166,18 +216,10 @@ struct Dwarf_Frame_s {
 
     /*  fr_reg_count is the the number of
         entries of the fr_reg array. */
-    unsigned long            fr_reg_count;
+    Dwarf_Unsigned fr_reg_count;
     struct Dwarf_Reg_Rule_s *fr_reg;
 
     Dwarf_Frame fr_next;
-};
-
-typedef struct Dwarf_Frame_Op_List_s *Dwarf_Frame_Op_List;
-
-/* This is used to chain together Dwarf_Frame_Op structures. */
-struct Dwarf_Frame_Op_List_s {
-    Dwarf_Frame_Op *fl_frame_instr;
-    Dwarf_Frame_Op_List fl_next;
 };
 
 /* See dwarf_frame.c for the heuristics used to set the
@@ -217,7 +259,6 @@ enum Dwarf_augmentation_type {
     aug_past_last
 };
 
-
 /*
     This structure contains all the pertinent info for a Cie. Most
     of the fields are taken straight from the definition of a Cie.
@@ -230,17 +271,17 @@ enum Dwarf_augmentation_type {
 struct Dwarf_Cie_s {
     Dwarf_Unsigned ci_length;
     char *ci_augmentation;
-    Dwarf_Small ci_code_alignment_factor;
-    Dwarf_Sbyte ci_data_alignment_factor;
-    Dwarf_Small ci_return_address_register;
+    Dwarf_Unsigned ci_code_alignment_factor;
+    Dwarf_Signed   ci_data_alignment_factor;
+    Dwarf_Unsigned ci_return_address_register;
     Dwarf_Small *ci_cie_start;
     Dwarf_Small *ci_cie_instr_start;
     Dwarf_Small *ci_cie_end;
     Dwarf_Debug ci_dbg;
     Dwarf_Frame ci_initial_table;
     Dwarf_Cie ci_next;
-    Dwarf_Small ci_length_size;
-    Dwarf_Small ci_extension_size;
+    Dwarf_Half ci_length_size;
+    Dwarf_Half ci_extension_size;
     Dwarf_Half ci_cie_version_number;
     enum Dwarf_augmentation_type ci_augmentation_type;
 
@@ -261,7 +302,6 @@ struct Dwarf_Cie_s {
     /*  If 'P' augmentation present, is handler addr. Else
         is zero. */
     Dwarf_Addr     ci_gnu_personality_handler_addr;
-
 
     /*  In creating list of cie's (which will become an array)
         record the position so fde can get it on fde creation. */
@@ -290,57 +330,61 @@ struct Dwarf_Cie_s {
 */
 struct Dwarf_Fde_s {
     Dwarf_Unsigned fd_length;
-    Dwarf_Addr fd_cie_offset;
+    Dwarf_Addr     fd_cie_offset;
     Dwarf_Unsigned fd_cie_index;
-    Dwarf_Cie fd_cie;
-    Dwarf_Addr fd_initial_location;
-    Dwarf_Small *fd_initial_loc_pos;
-    Dwarf_Addr fd_address_range;
-    Dwarf_Small *fd_fde_start;
-    Dwarf_Small *fd_fde_instr_start;
-    Dwarf_Small *fd_fde_end;
-    Dwarf_Debug fd_dbg;
+    Dwarf_Cie      fd_cie;
+    Dwarf_Addr     fd_initial_location;
+    Dwarf_Small   *fd_initial_loc_pos;
+    Dwarf_Addr     fd_address_range;
+    Dwarf_Small   *fd_fde_start;
+    Dwarf_Small   *fd_fde_instr_start;
+    Dwarf_Small   *fd_fde_end;
+    Dwarf_Debug    fd_dbg;
 
     /*  fd_offset_into_exception_tables is SGI/IRIX exception table
         offset. Unused and zero if not IRIX .debug_frame. */
-    Dwarf_Signed fd_offset_into_exception_tables;
+    Dwarf_Signed   fd_offset_into_exception_tables;
 
-    Dwarf_Fde fd_next;
-    Dwarf_Small fd_length_size;
-    Dwarf_Small fd_extension_size;
+    Dwarf_Fde      fd_next;
+    Dwarf_Small    fd_length_size;
+    Dwarf_Small    fd_extension_size;
     /*  So we know from an fde which 'count' of fde-s in
         Dwarf_Debug applies:  eh or standard. */
-    Dwarf_Small fd_is_eh;
+    Dwarf_Small    fd_is_eh;
     /*  The following 2 for GNU .eh_frame exception handling
         Augmentation Data. Set if CIE ci_augmentation_type
         is aug_gcc_eh_z. Zero if unused. */
     Dwarf_Unsigned fd_gnu_eh_augmentation_len;
-    Dwarf_Bool fd_gnu_eh_aug_present;
-    Dwarf_Ptr fd_gnu_eh_augmentation_bytes;
-    Dwarf_Addr fd_gnu_eh_lsda; /* If 'L' augmentation letter
+    Dwarf_Bool     fd_gnu_eh_aug_present;
+    Dwarf_Ptr      fd_gnu_eh_augmentation_bytes;
+    Dwarf_Addr     fd_gnu_eh_lsda; /* If 'L' augmentation letter
         present:  is address of the
         Language Specific Data Area (LSDA). If not 'L" is zero. */
 
-
     /* The following 3 are about the Elf section the FDEs come from.*/
-    Dwarf_Small * fd_section_ptr;
+    Dwarf_Small   *fd_section_ptr;
     Dwarf_Unsigned fd_section_length;
     Dwarf_Unsigned fd_section_index;
-    Dwarf_Small * fd_section_end;
+    Dwarf_Small   *fd_section_end;
 
     /*  If fd_eh_table_value_set is true, then fd_eh_table_value is
         meaningful.  Never meaningful for .debug_frame, is
         part of .eh_frame. */
     Dwarf_Unsigned fd_eh_table_value;
-    Dwarf_Bool fd_eh_table_value_set;
+    Dwarf_Bool     fd_eh_table_value_set;
 
     /* The following are memoization to save recalculation. */
     struct Dwarf_Frame_s fd_fde_table;
-    Dwarf_Addr    fd_fde_pc_requested;
-    Dwarf_Bool    fd_have_fde_tab;
+    Dwarf_Addr     fd_fde_pc_requested;
+    Dwarf_Bool     fd_have_fde_tab;
+
+    /*  Set by dwarf_get_fde_for_die() */
+    Dwarf_Bool     fd_fde_owns_cie;
 
 };
 
+int
+_dwarf_validate_register_numbers(Dwarf_Debug dbg,Dwarf_Error *error);
 
 int
 _dwarf_frame_address_offsets(Dwarf_Debug dbg, Dwarf_Addr ** addrlist,
@@ -366,6 +410,15 @@ enum Dwarf_augmentation_type
 _dwarf_get_augmentation_type(Dwarf_Debug dbg,
     Dwarf_Small *augmentation_string,
     int is_gcc_eh_frame);
+int _dwarf_fde_section_offset(Dwarf_Debug /*dbg*/,
+    Dwarf_Fde         /*in_fde*/,
+    Dwarf_Off *       /*fde_off*/,
+    Dwarf_Off *       /*cie_off*/,
+    Dwarf_Error *     /*err*/);
+int _dwarf_cie_section_offset(Dwarf_Debug /*dbg*/,
+    Dwarf_Cie     /*in_cie*/,
+    Dwarf_Off *   /*cie_off */,
+    Dwarf_Error * /*err*/);
 
 int _dwarf_get_return_address_reg(Dwarf_Small *frame_ptr,
     int version,
@@ -374,7 +427,6 @@ int _dwarf_get_return_address_reg(Dwarf_Small *frame_ptr,
     unsigned long *size,
     Dwarf_Unsigned *return_address_register,
     Dwarf_Error *error);
-
 
 /*  Temporary recording of crucial cie/fde prefix data.
     Vastly simplifies some argument lists.  */
@@ -406,7 +458,6 @@ struct cie_fde_prefix_s {
 
 int
 _dwarf_exec_frame_instr(Dwarf_Bool make_instr,
-    Dwarf_Frame_Op ** ret_frame_instr,
     Dwarf_Bool search_pc,
     Dwarf_Addr search_pc_val,
     Dwarf_Addr initial_loc,
@@ -415,14 +466,14 @@ _dwarf_exec_frame_instr(Dwarf_Bool make_instr,
     Dwarf_Frame table,
     Dwarf_Cie cie,
     Dwarf_Debug dbg,
-    Dwarf_Half reg_num_of_cfa,
-    Dwarf_Signed * returned_count,
-    Dwarf_Bool  * has_more_rows,
-    Dwarf_Addr  * subsequent_pc,
-    Dwarf_Error * error);
+    Dwarf_Unsigned reg_num_of_cfa,
+    Dwarf_Bool * has_more_rows,
+    Dwarf_Addr * subsequent_pc,
+    Dwarf_Frame_Instr_Head *ret_frame_instr_head,
+    Dwarf_Unsigned * returned_frame_instr_count,
+    Dwarf_Error *error);
 
-
-int dwarf_read_cie_fde_prefix(Dwarf_Debug dbg,
+int _dwarf_read_cie_fde_prefix(Dwarf_Debug dbg,
     Dwarf_Small *frame_ptr_in,
     Dwarf_Small *section_ptr_in,
     Dwarf_Unsigned section_index_in,
@@ -430,17 +481,19 @@ int dwarf_read_cie_fde_prefix(Dwarf_Debug dbg,
     struct cie_fde_prefix_s *prefix_out,
     Dwarf_Error *error);
 
-int dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
+int _dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
     struct cie_fde_prefix_s *  prefix,
     Dwarf_Small *section_pointer,
+    Dwarf_Unsigned section_length,
     Dwarf_Small *frame_ptr,
     Dwarf_Small *section_ptr_end,
     int use_gnu_cie_calc,
     Dwarf_Cie  cie_ptr_in,
+    Dwarf_Half address_size_in,
     Dwarf_Fde *fde_ptr_out,
     Dwarf_Error *error);
 
-int dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
+int _dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
     struct cie_fde_prefix_s *prefix,
     Dwarf_Small* section_pointer,
     Dwarf_Small* frame_ptr,
@@ -450,7 +503,7 @@ int dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
     Dwarf_Cie *cie_ptr_out,
         Dwarf_Error *error);
 
-
 int _dwarf_frame_constructor(Dwarf_Debug dbg,void * );
 void _dwarf_frame_destructor (void *);
 void _dwarf_fde_destructor (void *);
+void _dwarf_frame_instr_destructor(void *);

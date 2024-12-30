@@ -30,8 +30,8 @@ OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "config.h"
-#include <stdio.h>
+#include <config.h>
+
 #include "dwarf_elf_defines.h"
 #include "dwarf_elf_rel_detector.h"
 
@@ -87,6 +87,9 @@ _dwarf_is_32bit_abs_reloc(unsigned int type, unsigned machine)
         r = (0
 #if defined (R_386_32)
             |  (type == R_386_32)
+#endif
+#if defined (R_386_GOTOFF)
+            |  (type == R_386_GOTOFF)
 #endif
 #if defined (R_386_GOTPC)
             |  (type == R_386_GOTPC)
@@ -175,7 +178,6 @@ _dwarf_is_32bit_abs_reloc(unsigned int type, unsigned machine)
         break;
 #endif /* EM_PPC64 */
 
-
 #if defined(EM_PPC) && defined (R_PPC_ADDR32)
     case EM_PPC:
         r = (0
@@ -229,6 +231,7 @@ _dwarf_is_32bit_abs_reloc(unsigned int type, unsigned machine)
     case  EM_QUALCOMM_DSP6:
         r = (type == R_QUALCOMM_REL32);
         break;
+    default: break;
     }
     return r;
 }
@@ -362,7 +365,7 @@ _dwarf_is_64bit_abs_reloc(unsigned int type, unsigned machine)
             );
         break;
 #endif /* EM_AARCH64 */
-
+    default: break;
     }
     return r;
 }

@@ -24,11 +24,20 @@ Copyright 2018-2019 David Anderson. All rights reserved.
   Boston MA 02110-1301, USA.
 */
 
-#include "globals.h"
-#include "naming.h"
-#include "esb.h"
-#include "esb_using_functions.h"
-#include "sanitized.h"
+#include <config.h>
+#include <stdio.h> /* FILE decl for dd_esb.h, printf etc */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dd_defined_types.h"
+#include "dd_checkutil.h"
+#include "dd_glflags.h"
+#include "dd_globals.h"
+#include "dd_naming.h"
+#include "dd_esb.h"
+#include "dd_esb_using_functions.h"
+#include "dd_sanitized.h"
 
 /* print data in .debug_str_offsets.
    There is no guarantee this will work because

@@ -1,3 +1,10 @@
+Copyright (C) 2021.  David Anderson.
+This simple file is hereby placed in the Public Domain.
+
+This file documents the arrangement of line table headers
+across all Standard versions of DWARF and some special
+experimental line tables.
+
 Line Table Header variations.
 The experimental version has a distinct version
 number of 0xf006 so cannot be confused with DWARF4 or 5.
@@ -6,7 +13,7 @@ DWversion
 2,3,4,5 meaning the DWARF standards
 x meaning gcc's experimental two level line table.
 
-2345x  1. unit_length (4 or 12 bytes) 
+2345x  1. unit_length (4 or 12 bytes)
 2345x  2. version (2 bytes, for x is 0xF006)
 5      2.1  address_size
 5      2.2  segment_selector_size
@@ -35,5 +42,3 @@ x     24. subprogram_entry_format_count (1 byte)
 x     25. subprogram_entry_format (sequence of unsigned LEB128 pairs)
 x     26. subprograms_count (unsigned LEB128)
 x     27. subprograms (sequence of directory entries)
-
-

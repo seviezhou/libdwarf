@@ -34,7 +34,7 @@ the
 option).
 
 .PP
-As of June 2011 the printing options and the checking options
+The printing options and the checking options
 are mutually exclusive (if checking options are selected the
 section details are not printed). When errors are encountered
 dwarfdump does attempt to print sufficient context so that
@@ -47,7 +47,7 @@ If a script is to parse the output, the
 .BR \--format-dense\ (\-d)
 option is useful.
 .PP
-As of December 2020 DWARF expressions
+DWARF expressions
 are broken out to print each expression
 (DW_OP_plus for example) in a block
 on a separate line. 
@@ -74,7 +74,7 @@ dependent on the ABI/ISA of the object file.
 By default we use a generic set of register names
 handling up to 100 registers named r0-r99.
 .PP
-As of 2020 there are three different ways
+There are three different ways
 compiler writers separate the DWARF information
 from an executable/shared-object.
 One is DWARF5 Split Dwarf (the \--file-tied
@@ -88,6 +88,7 @@ The third way is on MacOS: the debug DWARF
 is in a separate object (dwarfdump/libdwarf
 automatically find it if it is present,
 \--no-follow-debuglink suppresses this finding).
+See also \--suppress-debuglink-crc.
 .PP
 In many cases one can get additional detail
 by specifying \-v (sometimes \-v \-v gets
@@ -288,13 +289,18 @@ Print  the .gdb_index, .debug_cu_index,
 Print .gnu_debuglink and .note.gnu.build-id sections
 
 .TP
-.BR \--elf\ (\-E)    
-prints,
-for Elf objects, object file details.
-See the "Print ELF Section Headers" section of
-the help file for additional choices on elf printing.
-If libdwarf or dwarfdump is built without libelf
-this and related options are not available.
+.BR \--suppress-debuglink-crc
+Tell libdwarf to avoid calculating debuglink crc values, 
+saving some runtime at startup and removing a
+useful check. However, finding alternate debuglink
+or buildid files remains enabled.
+
+.TP
+.BR \--no-follow-debuglink
+Tells dwarfdump and libdwarf not to pay any attention
+to .gnu.debuglink
+or .gnu.note.buildid 
+or Macos dSYM  references.
 
 .TP
 .BR \--print-frame\ (\-f)
@@ -378,22 +384,6 @@ and .debug_static_vars.
 .BR \--print-type\ (\-y)
 Print the .debug_pubtypes section
 (and .debug_typenames, an SGI IRIX-only section).
-
-.PP
-Having dwarfdump print relocations may help establish whether
-dwarfdump understands any relocations that might exist.
-Other tools may be more useful than dwarfdump
-for printing object-file details.
-If dwarfdump or libelf is built without libelf
-the relocation options are not available.
-See "Print Elf Relocation Data" in the help output for
-additional relocation printing choices.
-
-.TP
-.BR \--reloc\ (\-o)    
-Print all relocation records as well as we can manage.
-If libdwarf or dwarfdump were built without libelf
-this option is unavailable.
 
 .TP
 .BR \--version\ (\-V)  
@@ -706,6 +696,11 @@ with the command-line parser applicable (bash, sh, ...)
 or getopt(), as well as using URI to deal with searching
 for strings in non-ASCII such as French, (etc)
 or the now-nearly-universal UTF8.
+The regex implementation only allows ASCII in the expression
+and the expression only handles basic regular expressions,
+which are like Posix Basic Regular Expressions (PBRE), but the
+() grouping construct in PBRE seems unnecessary
+here so we suggest not using () grouping
 
 These are particularly useful when the amount of
 DWARF information output by -i is multiple

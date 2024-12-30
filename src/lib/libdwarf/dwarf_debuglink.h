@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, David Anderson
+Copyright (c) 2019-2023, David Anderson
 All rights reserved.
 
 Redistribution and use in source and binary forms, with
@@ -35,6 +35,8 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.  */
 extern "C" {
 #endif /* __cplusplus */
 
+#define  DW_BUILDID_SANE_SIZE (8*1024)
+
 int _dwarf_pathjoinl(dwarfstring *target,dwarfstring * input);
 
 int _dwarf_construct_linkedto_path(
@@ -43,7 +45,10 @@ int _dwarf_construct_linkedto_path(
     char          *pathname_in,
     char          *link_string_in, /* from debug link */
     dwarfstring   *link_string_fullpath,
+#if 0
     unsigned char *crc_in, /* from debug_link, 4 bytes */
+#endif
+
     unsigned char *buildid, /* from gnu buildid */
     unsigned       buildid_length, /* from gnu buildid */
     char        ***paths_out,

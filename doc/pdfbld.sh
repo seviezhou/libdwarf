@@ -1,75 +1,95 @@
 #!/bin/sh
 # This is meant to be done by hand
 # when changes made. Not done during build or install.
-# Just use the built pdf to install.
-# Run in the libdwarf source directory.
-# This generates two reader/consumer pdfs with -c or -a:
-# libdwarf2.1.pdf is standard mm output.
-# and libdwarf2.1xl.pdf is rearranged to have
-# TOC first but is...gigantic, so not shipped. 
+#   see doc/Makefile.am
+# mips_extensions.mm is a historical document
+# and should never change, so we do not build or
+# install mips_extensions.pdf
 
+here=`pwd`
+
+#if [ ! "$(top_srcdir)/doc" = "$here" ]
+#then
+#  echo "Run doc/make doc only in $(top_srcdir)/doc"
+#  echo "Give up as we are in $here"
+#  exit 1
+#fi
 c="n"
 p="n"
 if [ $# -lt 1 ]
 then
-  echo "Usage: pdfbld.sh [-a] [-c] [-p]"
-  echo "where: -c formats libdwarf2.1.pdf"
-  echo "where: -p formats libdwarf2p.1.pdf"
-  echo "where: -a formats both"
+  echo "Usage: pdfbld.sh [-c] [-p]"
+  echo "where: -c formats libdwarf.pdf"
+  echo "where: -p formats libdwarfp.pdf"
+  echo "where: Run it only in the doc source directory"
   exit 1
 fi
 for i in $*
 do
   case $i in
-    -a) c="y" ; p="y"
-       shift ;;
     -c) c="y"
+       echo "Build libdwarf consumer pdf for $src"
        shift ;;
     -p) p="y"
+       fin=libdwarfp.mm
+       fout=libdwarfp.pdf
+       echo "Build libdwarf consumer pdf for $src"
        shift ;;
-    *)  echo "Giving up: unknown argument use argument -a or -c or -p"
+    *)  echo "Giving up: unknown argument use argument -c or -p"
        exit 1 ;;
   esac
 done
+
+ckres() {
+  if [ $1 -eq 0 ]
+  then
+    return 0
+  fi
+  echo "FAIL $2"
+  exit 1
+}
+
+if [ $c = "y" ]
+then
+  doxygen
+  ckres $? "doc doxygen FAIL "
+  cd latex
+  ckres $? "doc cd to latex dir FAIL "
+  make
+  ckres $? "doc make latex fail"
+  cd ..
+  ckres $? "doc cd .. FAIL "
+  cp latex/refman.pdf libdwarf.pdf
+  ckres $? "doc copy latex/refman.pdf libdwarf.pdf FAIL"
+fi
+
+if [ ! $p = "y" ]
+then
+  exit 0
+fi
+
+src=$1
+echo "Build pdf for $src"
 
 set -x
 TROFF=/usr/bin/groff
 #TROFFDEV="-T ps"
 PSTOPDF=/usr/bin/ps2pdf
-if [ $c = "y" ]
+rm -f $fout
+
+pr -t -e $fin | tbl | $TROFF -n16 -mm >temp.ps
+if [  $? -ne 0 ]
 then
-  rm -f libdwarf2.1.pdf
-  t=junklibdwarfread.pdf
-  pr -t -e libdwarf2.1.mm | tbl | $TROFF -n16 -mm >libdwarf2.1.ps
-  $PSTOPDF libdwarf2.1.ps libdwarf2.1.pdf
-  # The rearrangement bloats the pdf from 600KB to 14MB
-  # and makes the release gigantic. So skip it.
-  #$PSTOPDF libdwarf2.1.ps $t
-  #echo "Now create libdwarf2.1.mm by tranforming $t"
-  #set +x
-  #sh ../scripts/rebuildpdf.sh $t libdwarf2.1xl.pdf
-  #ls -l libdwarf2.1.pdf
-  #ls -l libdwarf2.1xl.pdf
-  #rm $t
-  #if [ -d ~/web4/gweb/pagedata ]
-  #then
-  #  echo "Copying libdwarf2.1xl.pdf to ~/web4/gweb/pagedata"
-  #  cp libdwarf2.1xl.pdf ~/web4/gweb/pagedata
-  #fi
-  #set -x
+  echo "Building $fout FAILED in the pr/tbl/$TROFF step"
+  exit 1
+fi
+$PSTOPDF temp.ps $fout
+if [  $? -ne 0 ]
+then
+  echo "Building $fout FAILED in the $PSTOPDF step"
+  exit 1
 fi
 
-if [ $p = "y" ]
-then
-  rm -f libdwarf2p.1.pdf
-  pr -t -e  libdwarf2p.1.mm  | tbl | $TROFF -mm >libdwarf2p.1.ps
-  $PSTOPDF libdwarf2p.1.ps libdwarf2p.1.pdf
-fi
 set +x
-echo "Check libdwarf/libdwarf2.1xl.pdf is correct "
-echo "Should start with abstract page then follow with"
-echo "libdwarf2.1.pdf table of contents."
-
-
-rm -f libdwarf2.1.ps
-rm -f libdwarf2p.1.ps
+rm -f temp.ps
+exit 0

@@ -25,27 +25,34 @@
   Public License along with this program; if not, write the
   Free Software Foundation, Inc., 51 Franklin Street - Fifth
   Floor, Boston MA 02110-1301, USA.
-
 */
 
-#include "config.h"
-#include <stdio.h>
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif /* HAVE_STDLIB_H */
-#include <time.h>
+#include <config.h>
 
-#include "dwarf_incl.h"
+#include <stdlib.h> /* free() malloc() realloc() */
+#include <string.h> /* memset() strlen() */
+#include <time.h>   /* ctime() */
+
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_opaque.h"
 #include "dwarf_alloc.h"
 #include "dwarf_error.h"
 #include "dwarf_util.h"
 #include "dwarf_line.h"
-#include "dwarfstring.h"
+#include "dwarf_string.h"
 
 #define PRINTING_DETAILS 1
 /*  for dwarfstring_constructor_static, saving lots of malloc
     and free but beware: make sure each routine using
     this DOES NOT call another routine using it.
+    And do not use it in Dwarf_Error related calls.
     would be safer to have a buffer per function, but
     currently not necessary. */
 static char locallinebuf[200];
@@ -213,9 +220,7 @@ print_line_detail(
     dwarfstring_destructor(&m1);
 }
 
-
 #include "dwarf_line_table_reader_common.h"
-
 
 static void
 print_include_directory_details(Dwarf_Debug dbg,
@@ -230,8 +235,8 @@ print_include_directory_details(Dwarf_Debug dbg,
     dwarfstring_constructor_static(&m4,locallinebuf,
         sizeof(locallinebuf));
     if (line_version == DW_LINE_VERSION5) {
-        unsigned i = 0;
-        unsigned dfcount =
+        Dwarf_Unsigned i = 0;
+        Dwarf_Unsigned dfcount =
             line_context->lc_directory_entry_format_count;
 
         dwarfstring_constructor(&m4);
@@ -248,8 +253,8 @@ print_include_directory_details(Dwarf_Debug dbg,
             valpair = line_context->lc_directory_format_values +i;
             dwarfstring_append_printf_u(&m4,
                 "  format [%2u] ",i);
-            res = dwarf_get_LNCT_name(valpair->up_first,
-                &tname);
+            res = dwarf_get_LNCT_name((unsigned int)
+                valpair->up_first, &tname);
             if ( res != DW_DLV_OK) {
                 tname = "<unknown type>";
             }
@@ -258,7 +263,8 @@ print_include_directory_details(Dwarf_Debug dbg,
                 valpair->up_first);
             dwarfstring_append_printf_s (&m4,
                 " %-20s\n",(char *)tname);
-            res = dwarf_get_FORM_name(valpair->up_second,&fname);
+            res = dwarf_get_FORM_name((unsigned int)
+                valpair->up_second,&fname);
             if ( res != DW_DLV_OK) {
                 fname = "<unknown form>";
             }
@@ -442,8 +448,9 @@ print_file_entry_details(Dwarf_Debug dbg,
     dwarfstring_constructor_static(&m5,locallinebuf,
         sizeof(locallinebuf));
     if (line_version == DW_LINE_VERSION5) {
-        unsigned i = 0;
-        unsigned dfcount = line_context->lc_file_name_format_count;
+        Dwarf_Unsigned i = 0;
+        Dwarf_Unsigned dfcount =
+            line_context->lc_file_name_format_count;
 
         dwarfstring_append_printf_u(&m5,
             "  file entry format count      %u\n",dfcount);
@@ -456,7 +463,8 @@ print_file_entry_details(Dwarf_Debug dbg,
             valpair = line_context->lc_file_format_values +i;
             dwarfstring_append_printf_u(&m5,
                 "  format [%2u] ",i);
-            res = dwarf_get_LNCT_name(valpair->up_first,&tname);
+            res = dwarf_get_LNCT_name((unsigned int)
+                valpair->up_first,&tname);
             if ( res != DW_DLV_OK) {
                 tname = "<unknown type>";
             }
@@ -465,7 +473,8 @@ print_file_entry_details(Dwarf_Debug dbg,
                 valpair->up_first);
             dwarfstring_append_printf_s(&m5,
                 " %-20s\n",(char *)tname);
-            res = dwarf_get_FORM_name(valpair->up_second,&fname);
+            res = dwarf_get_FORM_name((unsigned int)
+                valpair->up_second,&fname);
             if ( res != DW_DLV_OK) {
                 fname = "<unknown form>";
             }
@@ -484,7 +493,6 @@ print_file_entry_details(Dwarf_Debug dbg,
         print_just_file_entry_details(dbg,line_context);
         dwarfstring_destructor(&m5);
     }
-
 }
 
 static void
@@ -540,7 +548,7 @@ static int print_actuals_and_locals(Dwarf_Debug dbg,
     Dwarf_Small *line_ptr_end,
     Dwarf_Half   address_size,
     int *        err_count_out,
-    Dwarf_Error *err);
+    Dwarf_Error *error);
 
 /*  return DW_DLV_OK if ok. else DW_DLV_NO_ENTRY or DW_DLV_ERROR
     If err_count_out is non-NULL, this is a special 'check'
@@ -584,7 +592,6 @@ _dwarf_internal_printlines(Dwarf_Die die,
     Dwarf_Unsigned fission_offset = 0;
     unsigned line_version = 0;
 
-
     /* The Dwarf_Debug this die belongs to. */
     Dwarf_Debug dbg = 0;
     Dwarf_CU_Context cu_context = 0;
@@ -625,23 +632,23 @@ _dwarf_internal_printlines(Dwarf_Die die,
     */
     lres = dwarf_whatform(stmt_list_attr,&attrform,error);
     if (lres != DW_DLV_OK) {
-        dwarf_dealloc(dbg,stmt_list_attr, DW_DLA_ATTR);
+        dwarf_dealloc_attribute(stmt_list_attr);
         return lres;
     }
     if (attrform != DW_FORM_data4 && attrform != DW_FORM_data8 &&
         attrform != DW_FORM_sec_offset ) {
-        dwarf_dealloc(dbg,stmt_list_attr, DW_DLA_ATTR);
+        dwarf_dealloc_attribute(stmt_list_attr);
         _dwarf_error(dbg, error, DW_DLE_LINE_OFFSET_BAD);
         return DW_DLV_ERROR;
     }
     lres = dwarf_global_formref(stmt_list_attr, &line_offset, error);
     if (lres != DW_DLV_OK) {
-        dwarf_dealloc(dbg,stmt_list_attr, DW_DLA_ATTR);
+        dwarf_dealloc_attribute(stmt_list_attr);
         return lres;
     }
 
     if (line_offset >= dbg->de_debug_line.dss_size) {
-        dwarf_dealloc(dbg,stmt_list_attr, DW_DLA_ATTR);
+        dwarf_dealloc_attribute(stmt_list_attr);
         _dwarf_error(dbg, error, DW_DLE_LINE_OFFSET_BAD);
         return DW_DLV_ERROR;
     }
@@ -652,14 +659,14 @@ _dwarf_internal_printlines(Dwarf_Die die,
             DW_SECT_LINE,
             &fission_offset,&fission_size,error);
         if (resfis != DW_DLV_OK) {
-            dwarf_dealloc(dbg,stmt_list_attr, DW_DLA_ATTR);
+            dwarf_dealloc_attribute(stmt_list_attr);
             return resfis;
         }
     }
 
     orig_line_ptr = section_start + line_offset + fission_offset;
     line_ptr = orig_line_ptr;
-    dwarf_dealloc(dbg, stmt_list_attr, DW_DLA_ATTR);
+    dwarf_dealloc_attribute(stmt_list_attr);
 
     /*  If die has DW_AT_comp_dir attribute, get the string
         that names the compilation directory. */
@@ -673,13 +680,17 @@ _dwarf_internal_printlines(Dwarf_Die die,
 
         cres = dwarf_formstring(comp_dir_attr, &cdir, error);
         if (cres == DW_DLV_ERROR) {
+            dwarf_dealloc_attribute(comp_dir_attr);
+            comp_dir_attr = 0;
             return cres;
-        } else if (cres == DW_DLV_OK) {
+        }
+        if (cres == DW_DLV_OK) {
             comp_dir = (Dwarf_Small *) cdir;
         }
     }
-    if (resattr == DW_DLV_OK) {
-        dwarf_dealloc(dbg, comp_dir_attr, DW_DLA_ATTR);
+    if (comp_dir_attr) {
+        dwarf_dealloc_attribute(comp_dir_attr);
+        comp_dir_attr = 0;
     }
     line_context = (Dwarf_Line_Context)
         _dwarf_get_alloc(dbg, DW_DLA_LINE_CONTEXT, 1);
@@ -904,14 +915,14 @@ print_actuals_and_locals(Dwarf_Debug dbg,
     dwarfstring_reset(&m8);
 
     {
-        Dwarf_Bool doaddrs = false;
-        Dwarf_Bool dolines = true;
+        Dwarf_Bool doaddrs = FALSE;
+        Dwarf_Bool dolines = TRUE;
 
         if (!line_ptr_actuals) {
             /* Normal single level line table. */
 
-            Dwarf_Bool is_single_table = true;
-            Dwarf_Bool is_actuals_table = false;
+            Dwarf_Bool is_single_table = TRUE;
+            Dwarf_Bool is_actuals_table = FALSE;
             print_line_header(dbg, is_single_table, is_actuals_table);
             res = read_line_table_program(dbg,
                 line_ptr, line_ptr_end, orig_line_ptr,
@@ -928,8 +939,8 @@ print_actuals_and_locals(Dwarf_Debug dbg,
                 return res;
             }
         } else {
-            Dwarf_Bool is_single_table = false;
-            Dwarf_Bool is_actuals_table = false;
+            Dwarf_Bool is_single_table = FALSE;
+            Dwarf_Bool is_actuals_table = FALSE;
             if (line_context->lc_version_number !=
                 EXPERIMENTAL_LINE_TABLES_VERSION) {
                 dwarf_srclines_dealloc_b(line_context);
@@ -953,7 +964,7 @@ print_actuals_and_locals(Dwarf_Debug dbg,
                 return res;
             }
             if (line_context->lc_actuals_table_offset > 0) {
-                is_actuals_table = true;
+                is_actuals_table = TRUE;
                 /* Read Actuals */
 
                 print_line_header(dbg, is_single_table,
@@ -980,21 +991,11 @@ print_actuals_and_locals(Dwarf_Debug dbg,
     return DW_DLV_OK;
 }
 
-
-
 /*  This is support for dwarfdump: making it possible
     for clients wanting line detail info on stdout
     to get that detail without including internal libdwarf
     header information.
     Caller passes in compilation unit DIE.
-    The _dwarf_ version is obsolete (though supported for
-    compatibility).
-    The dwarf_ version is preferred.
-    The functions are intentionally identical: having
-    _dwarf_print_lines call dwarf_print_lines might
-    better emphasize they are intentionally identical, but
-    that seemed slightly silly given how short the functions are.
-    Interface adds error_count (output value) February 2009.
 
     These *print_lines() functions print two-level tables in full
     even when the user is not asking for both (ie, when
@@ -1012,17 +1013,6 @@ dwarf_print_lines(Dwarf_Die die,
         only_line_header,error);
     return res;
 }
-int
-_dwarf_print_lines(Dwarf_Die die, Dwarf_Error * error)
-{
-    int only_line_header = 0;
-    int err_count = 0;
-    int res = _dwarf_internal_printlines(die,
-        &err_count,
-        only_line_header,error);
-    /* No way to get error count back in this interface */
-    return res;
-}
 
 /* The check is in case we are not printing full line data,
    this gets some of the issues noted with .debug_line,
@@ -1032,37 +1022,12 @@ _dwarf_print_lines(Dwarf_Die die, Dwarf_Error * error)
 */
 int
 dwarf_check_lineheader_b(Dwarf_Die die, int *err_count_out,
-    Dwarf_Error *err)
+    Dwarf_Error *error)
 {
     int res = 0;
 
     int only_line_header = 1;
     res = _dwarf_internal_printlines(die,err_count_out,
-        only_line_header,err);
+        only_line_header,error);
     return res;
-}
-
-/*  This is ugly, no way to detect errors. They get ignored.
-    see dwarf_check_lineheader_b() above. */
-void
-dwarf_check_lineheader(Dwarf_Die die, int *err_count_out)
-{
-    int res = 0;
-    Dwarf_Error err = 0;
-
-    int only_line_header = 1;
-    res = _dwarf_internal_printlines(die,err_count_out,
-        only_line_header,&err);
-    if (res == DW_DLV_ERROR) {
-        Dwarf_CU_Context c = 0;
-        Dwarf_Debug dbg = 0;
-
-        c = die->di_cu_context;
-        if (!c) {
-            return;
-        }
-        dbg = c->cc_dbg;
-        dwarf_dealloc(dbg,err,DW_DLA_ERROR);
-        err = 0;
-    }
 }

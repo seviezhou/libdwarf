@@ -30,45 +30,31 @@ OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifdef _WIN32
-#define _CRT_SECURE_NO_WARNINGS
-#endif /* _WIN32 */
+#include <config.h>
+#include <stddef.h> /* size_t */
+#include <stdio.h>  /* SEEK_END SEEK_SET */
 
-#include "config.h"
-#include <stdio.h>
-#ifdef HAVE_STRING_H
-#include <string.h> /* memcpy */
-#endif /* HAVE_STRING_H */
-#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h> /* open(), off_t, size_t, ssize_t */
-#endif /* HAVE_SYS_TYPES_H */
-#ifdef HAVE_UNISTD_H
-#include <unistd.h> /* lseek read close */
-#elif defined(_WIN32) && defined(_MSC_VER)
-#include <io.h>
-#include <basetsd.h>
-typedef SSIZE_T ssize_t; /* MSVC does not have POSIX ssize_t */
-#endif /* HAVE_UNISTD_H */
-
-/* Windows specific header files */
-#if defined(_WIN32) && defined(HAVE_STDAFX_H)
-#include "stdafx.h"
-#endif /* HAVE_STDAFX_H */
-
-#include "libdwarf.h" /* For error codes. */
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_opaque.h"
+#include "dwarf_safe_strcpy.h"
 #include "dwarf_object_read_common.h"
 
 /*  Neither off_t nor ssize_t is in C90.
     However, both are in Posix:
     IEEE Std 1003.1-1990, aka
-    ISO/IEC 9954-1:1990. */
+    ISO/IEC 9954-1:1990.
+    This gets asked to read large sections sometimes.
+    The Linux kernel allows at most 0x7ffff000
+    bytes in a read()*/
 int
-_dwarf_object_read_random(int fd, char *buf, off_t loc,
-    size_t size, off_t filesize, int *errc)
+_dwarf_object_read_random(int fd, char *buf, Dwarf_Unsigned loc,
+    Dwarf_Unsigned size, Dwarf_Unsigned filesize, int *errc)
 {
-    off_t scode = 0;
-    ssize_t rcode = 0;
-    off_t endpoint = 0;
+    Dwarf_Unsigned endpoint = 0;
+    int res = 0;
 
     if (loc >= filesize) {
         /*  Seek can seek off the end. Lets not allow that.
@@ -77,55 +63,26 @@ _dwarf_object_read_random(int fd, char *buf, off_t loc,
         return DW_DLV_ERROR;
     }
     endpoint = loc+size;
+    if (endpoint < loc) {
+        /*  Overflow!  The object is corrupt. */
+        *errc = DW_DLE_READ_OFF_END;
+        return DW_DLV_ERROR;
+    }
     if (endpoint > filesize) {
         /*  Let us -not- try to read past end of object.
             The object is corrupt. */
         *errc = DW_DLE_READ_OFF_END;
         return DW_DLV_ERROR;
     }
-    scode = lseek(fd,loc,SEEK_SET);
-    if (scode == (off_t)-1) {
+    res = _dwarf_seekr(fd,loc,SEEK_SET,0);
+    if (res != DW_DLV_OK) {
         *errc = DW_DLE_SEEK_ERROR;
         return DW_DLV_ERROR;
     }
-    /*
-     *  On Linux, read() (and similar system calls) will transfer at most
-       0x7ffff000 MAX_RW_COUNT (2,147,479,552) bytes, returning the number of bytes
-       actually transferred.  (This is true on both 32-bit and 64-bit
-       systems.) 
-     *
-     */    
-    size_t byte_left = size;
-    while (byte_left > 0)
-    {
-        if (byte_left > 0x7ffff000)
-            size = 0x7ffff000;
-        else
-            size = byte_left;
-
-        // printf("+:%ld\n", size);
-        rcode = read(fd,buf,size);
-        if (rcode == -1 ||
-            (size_t)rcode != size) {
-            // printf("(:%ld,%ld\n", rcode, size);
-            *errc = DW_DLE_READ_ERROR;
-            return DW_DLV_ERROR;
-        }
-
-        buf += rcode;
-        byte_left -= size;
+    res = _dwarf_readr(fd,buf,size,0);
+    if (res != DW_DLV_OK) {
+        *errc = DW_DLE_READ_ERROR;
+        return DW_DLV_ERROR;
     }
-
     return DW_DLV_OK;
-}
-
-void
-_dwarf_safe_strcpy(char *out, long outlen, const char *in, long inlen)
-{
-    if (inlen >= (outlen - 1)) {
-        strncpy(out, in, outlen - 1);
-        out[outlen - 1] = 0;
-    } else {
-        strcpy(out, in);
-    }
 }

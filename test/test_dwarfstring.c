@@ -30,16 +30,15 @@ OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include <stdio.h>  /* for printf */
-#include <stdlib.h>
-#include <string.h>
-#include "dwarfstring.h"
-#ifndef TRUE
-#define TRUE 1
-#endif /* TRUE */
-#ifndef FALSE
-#define FALSE 0
-#endif /* FALSE */
+#include <config.h>
+
+#include <stdio.h>  /* printf() */
+#include <stdlib.h> /* exit() */
+#include <string.h> /* strcmp() strlen() */
+
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_string.h"
 
 static int errcount;
 
@@ -81,7 +80,7 @@ check_value(const char *msg,unsigned long exp,
 }
 
 static int
-test1(int tnum)
+test1(void)
 {
     struct dwarfstring_s g;
     char *d = 0;
@@ -186,18 +185,21 @@ test1(int tnum)
     d = dwarfstring_string(&g);
     check_string("expected bigstring ",bigstr,d,__LINE__);
     biglen = dwarfstring_strlen(&g);
-    check_value("expected 120  ",strlen(bigstr),biglen,__LINE__);
+    check_value("expected 120  ",(unsigned long)strlen(bigstr),
+        (unsigned long)biglen,__LINE__);
 
     dwarfstring_append_length(&g,"xxyyzz",3);
 
     biglen = dwarfstring_strlen(&g);
-    check_value("expected 123  ",strlen(bigstr)+3,biglen,__LINE__);
+    check_value("expected 123  ",
+        (unsigned long)strlen(bigstr)+3,
+        (unsigned long)biglen,__LINE__);
     dwarfstring_destructor(&g);
     return 0;
 }
 
 static int
-test2(int tnum)
+test2(void)
 {
     struct dwarfstring_s g;
     char *d = 0;
@@ -234,13 +236,15 @@ test2(int tnum)
     d = dwarfstring_string(&g);
     check_string("expected bigstring ",bigstr,d,__LINE__);
     biglen = dwarfstring_strlen(&g);
-    check_value("expected 120  ",strlen(bigstr),biglen,__LINE__);
+    check_value("expected 120  ",
+        (unsigned long)strlen(bigstr),
+        (unsigned long)biglen,__LINE__);
     dwarfstring_destructor(&g);
     return 0;
 }
 
 static int
-test3(int tnum)
+test3(void)
 {
     struct dwarfstring_s g;
     char *d = 0;
@@ -273,7 +277,7 @@ test3(int tnum)
 }
 
 static int
-test4(int tnum)
+test4(void)
 {
     struct dwarfstring_s g;
     char *d = 0;
@@ -301,8 +305,8 @@ test4(int tnum)
     d = dwarfstring_string(&g);
     check_string("expected a01234xyz ",(char *)targetmystr,
         d,__LINE__);
-    check_value("expected 9",9,dwarfstring_strlen(&g),__LINE__);
-
+    check_value("expected 9",(unsigned long)9,
+        (unsigned long)dwarfstring_strlen(&g),__LINE__);
     if (d == fixedarea) {
         printf(" FAIL  not reallocated but should  be! line %d ",
             __LINE__);
@@ -313,7 +317,7 @@ test4(int tnum)
 }
 
 static int
-test5(int tnum)
+test5(void)
 {
     struct dwarfstring_s g;
     char *d = 0;
@@ -366,7 +370,7 @@ test5(int tnum)
     return 0;
 }
 static int
-test6(int tnum)
+test6(void)
 {
     dwarfstring g;
     char *d = 0;
@@ -410,7 +414,6 @@ test6(int tnum)
         "to dwarfstring_append_printf_i>";
     check_string("from _i",(char *)expstr,d,__LINE__);
     dwarfstring_destructor(&g);
-
 
     dwarfstring_constructor(&g);
     dwarfstring_append_printf_i(&g,"%s",12);
@@ -503,17 +506,16 @@ test6(int tnum)
     return 0;
 }
 
-
-int main()
+int main(void)
 {
-    test1(1);
-    test2(2);
-    test3(3);
-    test4(4);
-    test5(5);
-    test6(6);
+    test1();
+    test2();
+    test3();
+    test4();
+    test5();
+    test6();
     if (errcount) {
-        exit(1);
+        exit(EXIT_FAILURE);
     }
     exit(0);
 }

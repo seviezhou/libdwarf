@@ -1,6 +1,6 @@
 /*
 Copyright (C) 2000, 2004, 2006 Silicon Graphics, Inc.  All Rights Reserved.
-Portions Copyright (C) 2009-2015 David Anderson. All Rights Reserved.
+Portions Copyright (C) 2009-2023 David Anderson. All Rights Reserved.
 Portions Copyright (C) 2010-2012 SN Systems Ltd. All Rights Reserved.
 
   This program is free software; you can redistribute it
@@ -28,8 +28,6 @@ Portions Copyright (C) 2010-2012 SN Systems Ltd. All Rights Reserved.
 
 */
 
-
-
 #define DW_EXTENDED_OPCODE   0
 
 /*
@@ -44,7 +42,6 @@ Portions Copyright (C) 2010-2012 SN Systems Ltd. All Rights Reserved.
     It is entirely arbitrary, and 100 is surely too small if
     someone was inserting strings in the opcode. */
 #define DW_LNE_LEN_MAX   100
-
 
 /*
     This structure is used to build a list of all the
@@ -97,7 +94,6 @@ struct Dwarf_Subprog_Entry_s {
 };
 
 typedef struct Dwarf_Subprog_Entry_s *Dwarf_Subprog_Entry;
-
 
 struct Dwarf_Unsigned_Pair_s {
     Dwarf_Unsigned  up_first;
@@ -176,7 +172,7 @@ struct Dwarf_Line_Context_s {
     Dwarf_Small *lc_opcode_length_table; /* all versions */
 
     /*  The number to treat as standard ops. This is a special
-        accomodation of gcc using the new standard opcodes but not
+        accommodation of gcc using the new standard opcodes but not
         updating the version number.
         It's legal dwarf2, but much better
         for the user to understand as dwarf3 when 'it looks ok'. */
@@ -270,8 +266,6 @@ struct Dwarf_Line_Context_s {
     Dwarf_Unsigned lc_linecount_actuals;
 };
 
-
-
 /*  The line table set of registers.
     The state machine state variables.
     Using names from the DWARF documentation
@@ -286,7 +280,7 @@ struct Dwarf_Line_Registers_s {
     Dwarf_Bool lr_end_sequence;   /* DWARF2 */
     Dwarf_Bool lr_prologue_end;   /* DWARF3 */
     Dwarf_Bool lr_epilogue_begin; /* DWARF3 */
-    Dwarf_Small lr_isa;           /* DWARF3 */
+    Dwarf_Half lr_isa;            /* DWARF3 */
     Dwarf_Unsigned lr_op_index;   /* DWARF4, operation
         within VLIW instruction. */
     Dwarf_Unsigned lr_discriminator; /* DWARF4 */
@@ -299,72 +293,62 @@ void _dwarf_set_line_table_regs_default_values(
     unsigned lineversion,
     Dwarf_Bool is_stmt);
 
-
-
 /*
     This structure defines a row of the line table.
-    All of the fields except li_offset have the exact
+    All of the fields
     same meaning that is defined in Section 6.2.2
     of the Libdwarf Document.
 
-    li_offset is used by _dwarf_addr_finder() which is called
-    by rqs(1), an sgi utility for 'moving' shared libraries
-    as if the static linker (ld) had linked the shared library
-    at the newly-specified address.  Most libdwarf-using
-    apps will ignore li_offset and _dwarf_addr_finder().
 */
 struct Dwarf_Line_s {
     Dwarf_Addr li_address;  /* pc value of machine instr */
-    union addr_or_line_s {
-        struct li_inner_s {
-            /* New as of DWARF4 */
-            Dwarf_Unsigned li_discriminator;
+#if 1
+    struct li_inner_s {
+        /* New as of DWARF4 */
+        Dwarf_Unsigned li_discriminator;
 
-            /*  int identifying src file
-                li_file is a number 1-N, indexing into a conceptual
-                source file table as described in dwarf2/3 spec line
-                table doc. (see Dwarf_File_Entry lc_file_entries; and
-                Dwarf_Unsigned lc_file_entry_count;) */
-            Dwarf_Unsigned li_file;
+        /*  int identifying src file
+            li_file is a number 1-N, indexing into a conceptual
+            source file table as described in dwarf2/3 spec line
+            table doc. (see Dwarf_File_Entry lc_file_entries; and
+            Dwarf_Unsigned lc_file_entry_count;) */
+        Dwarf_Unsigned li_file;
 
-            /*  In single-level table is line number in
-                source file. 1-N
-                In logicals table is not used.
-                In actuals table is index into logicals table. 1-N*/
-            Dwarf_Unsigned li_line;
+        /*  In single-level table is line number in
+            source file. 1-N
+            In logicals table is not used.
+            In actuals table is index into logicals table. 1-N*/
+        Dwarf_Unsigned li_line;
 
-            Dwarf_Half li_column; /*source file column number 1-N */
-            Dwarf_Small li_isa;   /*New as of DWARF4. */
+        Dwarf_Half li_column; /*source file column number 1-N */
+        Dwarf_Half li_isa;   /*New as of DWARF4. */
 
-            /*  Two-level line tables.
-                Is index from logicals table
-                into logicals table. 1-N */
-            Dwarf_Unsigned li_call_context;
+        /*  Two-level line tables.
+            Is index from logicals table
+            into logicals table. 1-N */
+        Dwarf_Unsigned li_call_context;
 
-            /*  Two-level line tables.
-                is index into subprograms table. 1-N */
-            Dwarf_Unsigned li_subprogram;
+        /*  Two-level line tables.
+            is index into subprograms table. 1-N */
+        Dwarf_Unsigned li_subprogram;
 
-            /* To save space, use bit flags. */
-            /* indicate start of stmt */
-            unsigned li_is_stmt:1;
+        /* To save space, use bit flags. */
+        /* indicate start of stmt */
+        unsigned li_is_stmt:1;
 
-            /* indicate start basic block */
-            unsigned li_basic_block:1;
+        /* indicate start basic block */
+        unsigned li_basic_block:1;
 
-            /* first post sequence instr */
-            unsigned li_end_sequence:1;
+        /* first post sequence instr */
+        unsigned li_end_sequence:1;
 
-            unsigned li_prologue_end:1;
-            unsigned li_epilogue_begin:1;
+        unsigned li_prologue_end:1;
+        unsigned li_epilogue_begin:1;
 
-            /* Mark a line record as being DW_LNS_set_address. */
-            unsigned li_is_addr_set:1;
-        } li_l_data;
-#ifdef __sgi /* SGI IRIX ONLY */
-        Dwarf_Off li_offset;  /* for SGI IRIX rqs only*/
-#endif /* __sgi */
-    } li_addr_line;
+        /* Mark a line record as being DW_LNS_set_address. */
+        unsigned li_is_addr_set:1;
+    } li_l_data;
+#endif /* 1 */
     Dwarf_Line_Context li_context; /* assoc Dwarf_Line_Context_s */
 
     /*  Set only on the actuals table of a two-level line table.
@@ -372,7 +356,6 @@ struct Dwarf_Line_s {
     */
     Dwarf_Bool li_is_actuals_table;
 };
-
 
 int _dwarf_line_address_offsets(Dwarf_Debug dbg,
     Dwarf_Die die,
@@ -403,20 +386,22 @@ int _dwarf_internal_srclines(Dwarf_Die die,
     planned for in the  design of .debug_line)
     is too tricky to recode this several times and keep
     it right.
+
 */
 #define LOP_EXTENDED 1
 #define LOP_DISCARD  2
 #define LOP_STANDARD 3
 #define LOP_SPECIAL  4
 
+/* ASSERT: sets type to one of the above 4. Never anything else. */
 #define WHAT_IS_OPCODE(type,opcode,base,opcode_length,\
 line_ptr,highest_std) \
     if ((opcode) < (base)) {                             \
         /*  we know we must treat as a standard op       \
             or a special case. */                        \
         if ((opcode) == DW_EXTENDED_OPCODE) {            \
-            type = LOP_EXTENDED;                         \
-        } else if ((highest_std+1) >= (base)) {        \
+            (type) = LOP_EXTENDED;                         \
+        } else if (((highest_std)+1) >= (base)) {        \
             /*  == Standard case: compile of             \
                 dwarf_line.c and object                  \
                 have same standard op codes set.         \
@@ -429,7 +414,7 @@ line_ptr,highest_std) \
                 object standard ops.                     \
                 The new standard op codes will not       \
                 appear in the object. */                 \
-            type = LOP_STANDARD;                         \
+            (type) = LOP_STANDARD;                         \
         } else  {                                        \
             /* These are standard opcodes in the object  \
             ** that were not defined  in the header      \
@@ -438,11 +423,11 @@ line_ptr,highest_std) \
             ** out-of-date dwarf reader to read newer    \
             ** line table data transparently.            \
             */                                           \
-            type = LOP_DISCARD;                          \
+            (type) = LOP_DISCARD;                          \
         }                                                \
     } else {                                             \
         /* Is  a special op code. */                     \
-        type =  LOP_SPECIAL;                             \
+        (type) =  LOP_SPECIAL;                             \
     }
 
 /*  The following is from  the dwarf definition of 'ubyte'
@@ -491,11 +476,10 @@ void _dwarf_report_bad_lnct( Dwarf_Debug dbg,
     const char * dlename,
     Dwarf_Error *err);
 
-
 void _dwarf_update_chain_list( Dwarf_Chain chain_line,
     Dwarf_Chain *head_chain, Dwarf_Chain *curr_chain);
 void _dwarf_free_chain_entries(Dwarf_Debug dbg,Dwarf_Chain head,
-    int count);
+    Dwarf_Unsigned count);
 
 int _dwarf_line_context_constructor(Dwarf_Debug dbg, void *m);
 void _dwarf_line_context_destructor(void *m);

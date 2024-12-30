@@ -61,91 +61,70 @@ dwarf_init_path_dl(path true_path and globals, dbg1
                                 else return NO_ENTRY
 */
 
-#include "config.h"
-#include <stdio.h>
-#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h> /* open(), off_t, size_t, ssize_t */
-#endif /* HAVE_SYS_TYPES_H */
-#ifdef HAVE_SYS_STAT_H
-#include <sys/stat.h>
-#endif /* HAVE_SYS_STAT_H */
-#include <fcntl.h>
-#ifdef HAVE_STRING_H
-#include <string.h>
-#endif /* HAVE_STRING_H */
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif /* HAVE_STDLIB_H */
-#ifdef HAVE_MALLOC_H
-/* Useful include for some Windows compilers. */
-#include <malloc.h>
-#endif /* HAVE_MALLOC_H */
-#ifdef HAVE_UNISTD_H
-#include <unistd.h>
-#elif defined(_WIN32) && defined(_MSC_VER)
-#include <io.h>
-#endif /* HAVE_UNISTD_H */
+#include <config.h>
 
-#include "dwarf_incl.h"
+#include <stddef.h> /* size_t */
+#include <stdlib.h> /* free() */
+#include <string.h> /* strdup() */
+#include <stdio.h> /* debugging */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_util.h"
+#include "dwarf_opaque.h"
+#include "dwarf_alloc.h"
 #include "dwarf_error.h"
 #include "dwarf_object_detector.h"
 
-#ifndef O_BINARY
-#define O_BINARY 0
-#endif /* O_BINARY */
+/*  The design of Dwarf_Debug_s data on --file-tied
+data and how it is used.  See also dwarf_opaque.h
+and dwarf_util.c
 
-/*  This is the initialization set intended to
-    handle multiple object formats.
-    Created September 2018
+The fields involved are
+de_dbg
+de_primary_dbg
+de_secondary_dbg
+de_errors_dbg
+de_tied_data.td_tied_object
 
-    The init functions here cannot process archives.
-    For archives the libelf-only dwarf_elf_init*()
-    functions are used if present, else archives
-    cannot be read.
-*/
+On any init completing it will be considered
+    primary, Call it p1.
+    p1->de_dbg == p1
+    p1->de_primary_dbg == p1
+    p1->de_secondary_dbg == NULL
+        p1->de_errors_dbg == p1
+    p1->de_tied_data.td_tied_object = 0
+Init a second object, call it p2 (settings as above).
 
+Call dwarf_set_tied (p1,p2) (it is ok if p2 == NULL)
+    p1 is as above except that
+        p1->de_secondary_dbg == p2
+        p1->de_tied_data.td_tied_object = p2;
+    If p2 is non-null:
+        p2->de_dbg == p2
+        p2->de_primary_dbg = p1.
+        p2->de_secondary_dbg = p2
+        p2->de_errors_dbg = p1
+All this is only useful if p1 has dwo/dwp sections
+(split-dwarf) and p2 has the relevant TAG_skeleton(s)
 
-#define DWARF_DBG_ERROR(dbg,errval,retval) \
-    _dwarf_error(dbg, error, errval); return(retval);
+If px->de_secondary_dbg is non-null
+    and px->secondary_dbg == px
+    then px is secondary.
 
+If x->de_secondary_dbg is non-null
+    and px->secondary_dbg != px
+    then px is primary.
 
-#define FALSE  0
-#define TRUE   1
-/*  An original basic dwarf initializer function for consumers.
-    Return a libdwarf error code on error, return DW_DLV_OK
-    if this succeeds.
-    dwarf_init_b() is a better choice where there
-    are section groups in an object file. */
-int
-dwarf_init(int fd,
-    Dwarf_Unsigned access,
-    Dwarf_Handler errhand,
-    Dwarf_Ptr errarg,
-    Dwarf_Debug * ret_dbg,
-    Dwarf_Error * error)
-{
-    return dwarf_init_b(fd,access, DW_GROUPNUMBER_ANY,
-        errhand,errarg,ret_dbg,error);
-}
+If px->de_secondary_dbg is null
+    then px is a primary. and there
+    is no secondary.
 
-static int
-open_a_file(const char * name)
-{
-    /* Set to a file number that cannot be legal. */
-    int fd = -1;
-
-#if HAVE_ELF_OPEN
-    /*  It is not possible to share file handles
-        between applications or DLLs. Each application has its own
-        file-handle table. For two applications to use the same file
-        using a DLL, they must both open the file individually.
-        Let the 'libelf' dll open and close the file.  */
-    fd = elf_open(name, O_RDONLY | O_BINARY);
-#else
-    fd = open(name, O_RDONLY | O_BINARY);
-#endif
-    return fd;
-}
+    Call dwarf_set_tied(p1,NULL) and both p1 and
+    p2 are returned to initial conditions
+    as before they were tied together. */
 
 static int
 set_global_paths_init(Dwarf_Debug dbg, Dwarf_Error* error)
@@ -157,25 +136,41 @@ set_global_paths_init(Dwarf_Debug dbg, Dwarf_Error* error)
     return res;
 }
 
-/* New in December 2018. */
+/* New in September 2023. */
+int dwarf_init_path_a(const char *path,
+    char            * true_path_out_buffer,
+    unsigned          true_path_bufferlen,
+    unsigned          groupnumber,
+    unsigned          universalnumber,
+    Dwarf_Handler     errhand,
+    Dwarf_Ptr         errarg,
+    Dwarf_Debug     * ret_dbg,
+    Dwarf_Error     * error)
+{
+    return dwarf_init_path_dl_a(path,
+        true_path_out_buffer,true_path_bufferlen,
+        groupnumber,universalnumber,
+        errhand,errarg,ret_dbg,
+        0,0,0,
+        error);
+}
+
 int dwarf_init_path(const char *path,
     char            * true_path_out_buffer,
     unsigned          true_path_bufferlen,
-    Dwarf_Unsigned    access,
     unsigned          groupnumber,
     Dwarf_Handler     errhand,
     Dwarf_Ptr         errarg,
     Dwarf_Debug     * ret_dbg,
-    const char      * reserved1,
-    Dwarf_Unsigned    reserved2,
-    Dwarf_Unsigned  * reserved3,
     Dwarf_Error     * error)
 {
-    return dwarf_init_path_dl(path,
+    unsigned int universalnumber = 0;
+    return dwarf_init_path_dl_a(path,
         true_path_out_buffer,true_path_bufferlen,
-        access,groupnumber,errhand,errarg,ret_dbg,
+        groupnumber,universalnumber,
+        errhand,errarg,ret_dbg,
         0,0,0,
-        reserved1,reserved2,reserved3,error);
+        error);
 }
 
 static void
@@ -197,7 +192,7 @@ final_common_settings(Dwarf_Debug dbg,
     }
     dbg->de_owns_fd = TRUE;
     res = set_global_paths_init(dbg,error);
-    if (res == DW_DLV_ERROR) {
+    if (res == DW_DLV_ERROR && error) {
         dwarf_dealloc_error(dbg,*error);
         *error = 0;
     }
@@ -214,30 +209,71 @@ final_common_settings(Dwarf_Debug dbg,
     If none of the above found, it copies path into true_path
     and returns DW_DLV_OK, we know the name is good;
 
-    The fd is owned by libdwarf and is in the created dbg->de_fd
+    The pathn_fd is owned by libdwarf and is in the created dbg->de_fd
     field.
 */
-int dwarf_init_path_dl(const char *path,
-    char                      * true_path_out_buffer,
-    unsigned                    true_path_bufferlen,
-    Dwarf_Unsigned              access,
-    unsigned                    groupnumber,
-    Dwarf_Handler               errhand,
-    Dwarf_Ptr                   errarg,
-    Dwarf_Debug               * ret_dbg,
-    char                      ** dl_path_array,
-    unsigned int                 dl_path_count,
-    unsigned char             * path_source,
-    UNUSEDARG const char      * reserved1,
-    UNUSEDARG Dwarf_Unsigned    reserved2,
-    UNUSEDARG Dwarf_Unsigned  * reserved3,
-    Dwarf_Error               * error)
+int
+dwarf_init_path_dl(const char *path,
+    char            * true_path_out_buffer,
+    unsigned        true_path_bufferlen,
+    unsigned        groupnumber,
+    Dwarf_Handler   errhand,
+    Dwarf_Ptr       errarg,
+    Dwarf_Debug     * ret_dbg,
+    char            ** dl_path_array,
+    unsigned int    dl_path_count,
+    unsigned char   * path_source,
+    Dwarf_Error     * error)
+{
+    unsigned int universalnumber = 0;
+    int res = 0;
+
+    res = dwarf_init_path_dl_a(path,
+        true_path_out_buffer, true_path_bufferlen,
+        groupnumber,universalnumber,
+        errhand,errarg,ret_dbg, dl_path_array,
+        dl_path_count,path_source,error);
+    return res;
+}
+
+#if 0 /*  for debugging */
+static void
+dump_header_fields(const char *w,Dwarf_Debug dbg)
+{
+    printf("Dumping certain fields of %s\n",w);
+    printf("ftype         : %d\n",dbg->de_ftype);
+    printf("machine       : %llu\n",dbg->de_obj_machine);
+    printf("flags         : 0x%llx\n",dbg->de_obj_flags);
+    printf("pointer size  : %u\n",dbg->de_pointer_size);
+    printf("big_endian?   : %u\n",dbg->de_big_endian_object);
+    printf("ubcount       : %u\n",dbg->de_universalbinary_count);
+    printf("ubindex       : %u\n",dbg->de_universalbinary_index);
+    printf("ub offset     : %llu\n",dbg->de_obj_ub_offset);
+    printf("path source   : %u\n",dbg->de_path_source);
+    printf("comdat group# : %u\n",dbg->de_groupnumber);
+    exit(0);
+}
+#endif
+
+int
+dwarf_init_path_dl_a(const char *path,
+    char            * true_path_out_buffer,
+    unsigned        true_path_bufferlen,
+    unsigned        groupnumber,
+    unsigned        universalnumber,
+    Dwarf_Handler   errhand,
+    Dwarf_Ptr       errarg,
+    Dwarf_Debug     * ret_dbg,
+    char            ** dl_path_array,
+    unsigned int    dl_path_count,
+    unsigned char   * path_source,
+    Dwarf_Error     * error)
 {
     unsigned       ftype = 0;
     unsigned       endian = 0;
     unsigned       offsetsize = 0;
     Dwarf_Unsigned filesize = 0;
-    int res =  DW_DLV_NO_ENTRY;
+    int res =  DW_DLV_ERROR;
     int errcode = 0;
     int fd = -1;
     Dwarf_Debug dbg = 0;
@@ -248,6 +284,9 @@ int dwarf_init_path_dl(const char *path,
         DWARF_DBG_ERROR(NULL,DW_DLE_DWARF_INIT_DBG_NULL,
             DW_DLV_ERROR);
     }
+    /*  Non-null *ret_dbg will cause problems dealing with
+        DW_DLV_ERROR */
+    *ret_dbg = 0;
     if (!path) {
         /* Oops. Null path */
         _dwarf_error_string(NULL,
@@ -273,7 +312,6 @@ int dwarf_init_path_dl(const char *path,
                 errcode = 0;
             }
         }
-    } else {
     }
     if (res != DW_DLV_OK) {
         res = dwarf_object_detector_path_b(path,
@@ -290,7 +328,7 @@ int dwarf_init_path_dl(const char *path,
         }
     }
     if (res != DW_DLV_OK) {
-        /*  So as a last resurt in case
+        /*  So as a last resort in case
             of data corruption in the object.
             Lets try without
             investigating debuglink  or dSYM. */
@@ -301,24 +339,24 @@ int dwarf_init_path_dl(const char *path,
             &ftype,&endian,&offsetsize,&filesize,
             &lpath_source,
             &errcode);
-        if (res == DW_DLV_ERROR) {
-            errcode = 0;
-        }
     }
     if (res != DW_DLV_OK) {
         /* impossible. The last above *had* to work */
+        if (res == DW_DLV_ERROR) {
+            _dwarf_error(NULL, error, errcode);
+        }
         return res;
     }
     /*  ASSERT: lpath_source != DW_PATHSOURCE_unspecified  */
-    if (lpath_source != DW_PATHSOURCE_basic  ) {
+    if (lpath_source != DW_PATHSOURCE_basic &&
+        true_path_out_buffer && *true_path_out_buffer) {
         /* MacOS dSYM or GNU debuglink */
-
         file_path = true_path_out_buffer;
-        fd = open_a_file(true_path_out_buffer);
+        fd = _dwarf_openr(true_path_out_buffer);
     } else {
-        /*  ASSERT: pathlsource = DW_PATHSOURCE_basic */
+        /*  ASSERT: lpath_source = DW_PATHSOURCE_basic */
         file_path = (char *)path;
-        fd = open_a_file(path);
+        fd = _dwarf_openr(path);
     }
 
     if (fd == -1) {
@@ -330,27 +368,31 @@ int dwarf_init_path_dl(const char *path,
         res = _dwarf_elf_nlsetup(fd,
             file_path,
             ftype,endian,offsetsize,filesize,
-            access,groupnumber,errhand,errarg,&dbg,error);
+            groupnumber,errhand,errarg,&dbg,error);
         if (res != DW_DLV_OK) {
-            close(fd);
+            _dwarf_closer(fd);
             return res;
         }
         final_common_settings(dbg,file_path,fd,
             lpath_source,path_source,error);
+        dbg->de_ftype =  (Dwarf_Small)ftype;
         *ret_dbg = dbg;
         return res;
     }
+    case DW_FTYPE_APPLEUNIVERSAL:
     case DW_FTYPE_MACH_O: {
         res = _dwarf_macho_setup(fd,
             file_path,
+            universalnumber,
             ftype,endian,offsetsize,filesize,
-            access,groupnumber,errhand,errarg,&dbg,error);
+            groupnumber,errhand,errarg,&dbg,error);
         if (res != DW_DLV_OK) {
-            close(fd);
+            _dwarf_closer(fd);
             return res;
         }
         final_common_settings(dbg,file_path,fd,
             lpath_source,path_source,error);
+        dbg->de_ftype =  (Dwarf_Small)ftype;
         *ret_dbg = dbg;
         return res;
     }
@@ -358,39 +400,43 @@ int dwarf_init_path_dl(const char *path,
         res = _dwarf_pe_setup(fd,
             file_path,
             ftype,endian,offsetsize,filesize,
-            access,groupnumber,errhand,errarg,&dbg,error);
+            groupnumber,errhand,errarg,&dbg,error);
         if (res != DW_DLV_OK) {
-            close(fd);
+            _dwarf_closer(fd);
             return res;
         }
         final_common_settings(dbg,file_path,fd,
             lpath_source,path_source,error);
+        dbg->de_ftype =  (Dwarf_Small)ftype;
         *ret_dbg = dbg;
         return res;
     }
     default:
-        close(fd);
+        _dwarf_closer(fd);
         DWARF_DBG_ERROR(NULL, DW_DLE_FILE_WRONG_TYPE,
             DW_DLV_ERROR);
+        /* Macro returns, cannot reach this line. */
     }
-    return DW_DLV_NO_ENTRY;
+    /* Cannot reach this line */
 }
 
-
 /*  New March 2017, this provides for reading
-    object files with multiple elf section groups.  */
+    object files with multiple elf section groups.
+    If you are unsure about group_number, use
+    DW_GROUPNUMBER_ANY  as groupnumber.
+*/
 int
 dwarf_init_b(int fd,
-    Dwarf_Unsigned access,
-    unsigned  group_number,
-    Dwarf_Handler errhand,
-    Dwarf_Ptr errarg,
-    Dwarf_Debug * ret_dbg,
-    Dwarf_Error * error)
+    unsigned        group_number,
+    Dwarf_Handler   errhand,
+    Dwarf_Ptr       errarg,
+    Dwarf_Debug *   ret_dbg,
+    Dwarf_Error *   error)
 {
     unsigned ftype = 0;
     unsigned endian = 0;
     unsigned offsetsize = 0;
+    unsigned universalnumber = 0;
     Dwarf_Unsigned   filesize = 0;
     int res = 0;
     int errcode = 0;
@@ -398,33 +444,39 @@ dwarf_init_b(int fd,
     if (!ret_dbg) {
         DWARF_DBG_ERROR(NULL,DW_DLE_DWARF_INIT_DBG_NULL,DW_DLV_ERROR);
     }
+    /*  Non-null *ret_dbg will cause problems dealing with
+        DW_DLV_ERROR */
+    *ret_dbg = 0;
     res = dwarf_object_detector_fd(fd, &ftype,
         &endian,&offsetsize,&filesize,&errcode);
     if (res == DW_DLV_NO_ENTRY) {
         return res;
-    } else if (res == DW_DLV_ERROR) {
+    }
+    if (res == DW_DLV_ERROR) {
+        /* This macro does a return. */
         DWARF_DBG_ERROR(NULL, DW_DLE_FILE_WRONG_TYPE, DW_DLV_ERROR);
     }
-
     switch(ftype) {
     case DW_FTYPE_ELF: {
         int res2 = 0;
 
         res2 = _dwarf_elf_nlsetup(fd,"",
             ftype,endian,offsetsize,filesize,
-            access,group_number,errhand,errarg,ret_dbg,error);
+            group_number,errhand,errarg,ret_dbg,error);
         if (res2 != DW_DLV_OK) {
             return res2;
         }
         set_global_paths_init(*ret_dbg,error);
         return res2;
         }
+    case DW_FTYPE_APPLEUNIVERSAL:
     case DW_FTYPE_MACH_O: {
         int resm = 0;
 
         resm = _dwarf_macho_setup(fd,"",
+            universalnumber,
             ftype,endian,offsetsize,filesize,
-            access,group_number,errhand,errarg,ret_dbg,error);
+            group_number,errhand,errarg,ret_dbg,error);
         if (resm != DW_DLV_OK) {
             return resm;
         }
@@ -438,16 +490,17 @@ dwarf_init_b(int fd,
         resp = _dwarf_pe_setup(fd,
             "",
             ftype,endian,offsetsize,filesize,
-            access,group_number,errhand,errarg,ret_dbg,error);
+            group_number,errhand,errarg,ret_dbg,error);
         if (resp != DW_DLV_OK) {
             return resp;
         }
         set_global_paths_init(*ret_dbg,error);
         return resp;
         }
+    default: break;
     }
     DWARF_DBG_ERROR(NULL, DW_DLE_FILE_WRONG_TYPE, DW_DLV_ERROR);
-    return res;
+    /* Macro above returns. cannot reach here. */
 }
 
 /*
@@ -459,16 +512,17 @@ dwarf_init_b(int fd,
     or the -b() form was used to init 'dbg'.
 */
 int
-dwarf_finish(Dwarf_Debug dbg, Dwarf_Error * error)
+dwarf_finish(Dwarf_Debug dbg)
 {
-    if (!dbg) {
+    if (IS_INVALID_DBG(dbg)) {
+        _dwarf_free_static_errlist();
         return DW_DLV_OK;
     }
     if (dbg->de_obj_file) {
         /*  The initial character of a valid
             dbg->de_obj_file->object struct is a letter:
             E, F, M, or P */
-        char otype  = *(char *)(dbg->de_obj_file->object);
+        char otype  = *(char *)(dbg->de_obj_file->ai_object);
 
         switch(otype) {
         case 'E':
@@ -489,7 +543,7 @@ dwarf_finish(Dwarf_Debug dbg, Dwarf_Error * error)
         }
     }
     if (dbg->de_owns_fd) {
-        close(dbg->de_fd);
+        _dwarf_closer(dbg->de_fd);
         dbg->de_owns_fd = FALSE;
     }
     free((void *)dbg->de_path);
@@ -500,39 +554,85 @@ dwarf_finish(Dwarf_Debug dbg, Dwarf_Error * error)
         It never returns DW_DLV_ERROR.
         Not all code uses libdwarf exactly as we do
         hence the free() there. */
-    return dwarf_object_finish(dbg, error);
+    return dwarf_object_finish(dbg);
 }
 
 /*
     tieddbg should be the executable or .o
     that has the .debug_addr section that
     the base dbg refers to. See Split Objects in DWARF5.
+    Or in DWARF5  maybe .debug_rnglists or .debug_loclists.
 
-    Allows setting to NULL (NULL is the default
-    of  de_tied_data.td_tied_object).
+    Allows calling with NULL though we really just set
+    primary_dbg->ge_primary to de_primary_dbg, thus cutting
+    links between main and any previous tied-file setup.
     New September 2015.
+    Logic revised Nov 2024. See dwarf_opaque.h
 */
 int
-dwarf_set_tied_dbg(Dwarf_Debug dbg,
-    Dwarf_Debug tieddbg,
+dwarf_set_tied_dbg(Dwarf_Debug primary_dbg,
+    Dwarf_Debug secondary_dbg,
     Dwarf_Error*error)
 {
-    if (!dbg) {
-        DWARF_DBG_ERROR(NULL, DW_DLE_DBG_NULL, DW_DLV_ERROR);
+    CHECK_DBG(primary_dbg,error,"dwarf_set_tied_dbg()");
+    if (secondary_dbg == primary_dbg) {
+        _dwarf_error_string(primary_dbg,error,
+            DW_DLE_NO_TIED_FILE_AVAILABLE,
+            "DW_DLE_NO_TIED_FILE_AVAILABLE: bad argument to "
+            "dwarf_set_tied_dbg(), tied and main must not be the "
+            "same pointer!");
+        return DW_DLV_ERROR;
     }
-    dbg->de_tied_data.td_tied_object = tieddbg;
-    if (tieddbg) {
-        tieddbg->de_tied_data.td_is_tied_object = TRUE;
+    if (secondary_dbg) {
+        if (primary_dbg->de_secondary_dbg ) {
+            _dwarf_error_string(primary_dbg,error,
+                DW_DLE_NO_TIED_FILE_AVAILABLE,
+                "DW_DLE_NO_TIED_FILE_AVAILABLE: bad argument to "
+                "dwarf_set_tied_dbg(), primary_dbg already has"
+                " a secondary_dbg!");
+            return DW_DLV_ERROR;
+        }
+        primary_dbg->de_tied_data.td_tied_object = secondary_dbg;
+        primary_dbg->de_secondary_dbg = secondary_dbg;
+        secondary_dbg->de_secondary_dbg = secondary_dbg;
+        secondary_dbg->de_errors_dbg = primary_dbg;
+        CHECK_DBG(secondary_dbg,error,"dwarf_set_tied_dbg() "
+            "dw_secondary_dbg"
+            "is invalid");
+        primary_dbg->de_secondary_dbg = secondary_dbg;
+        return DW_DLV_OK;
+    } else {
+        primary_dbg->de_secondary_dbg = 0;
+        primary_dbg->de_tied_data.td_tied_object = 0;
     }
     return DW_DLV_OK;
 }
 
-/*  Unsure of the use-case of this.
-    New September 2015. */
+/*  New September 2015.
+    As of Aug 2023 this correctly returns tied_dbg
+    whether main or tied passed in. Before this
+    it would return the dbg passed in.
+    If there is no tied-dbg this returns main dbg. */
 int
-dwarf_get_tied_dbg(Dwarf_Debug dbg, Dwarf_Debug *tieddbg_out,
-    UNUSEDARG Dwarf_Error*error)
+dwarf_get_tied_dbg(Dwarf_Debug dw_dbg,
+    Dwarf_Debug *dw_secondary_dbg_out,
+    Dwarf_Error *dw_error)
 {
-    *tieddbg_out = dbg->de_tied_data.td_tied_object;
+    CHECK_DBG(dw_dbg,dw_error,"dwarf_get_tied_dbg()");
+    *dw_secondary_dbg_out = 0;
+    if (DBG_IS_PRIMARY(dw_dbg)) {
+        if (!dw_dbg->de_secondary_dbg) {
+            *dw_secondary_dbg_out = dw_dbg;
+            return DW_DLV_OK;
+        }
+        *dw_secondary_dbg_out = dw_dbg->de_secondary_dbg;
+        return DW_DLV_OK;
+    }
+    if (DBG_IS_SECONDARY(dw_dbg)) {
+        *dw_secondary_dbg_out = dw_dbg;
+        return DW_DLV_OK;
+    }
+    /*  Leave returned secondary_dbg_out NULL,
+        this should not happen */
     return DW_DLV_OK;
 }

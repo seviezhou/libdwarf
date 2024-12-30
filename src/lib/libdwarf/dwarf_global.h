@@ -1,7 +1,7 @@
 /*
 
   Copyright (C) 2000,2004,2005 Silicon Graphics, Inc.  All Rights Reserved.
-  Portions Copyright (C) 2011 David Anderson. All Rights Reserved.
+  Portions Copyright (C) 2011-2023 David Anderson. All Rights Reserved.
 
   This program is free software; you can redistribute it
   and/or modify it under the terms of version 2.1 of the
@@ -28,9 +28,6 @@
 
 */
 
-
-
-
 typedef struct Dwarf_Global_Context_s *Dwarf_Global_Context;
 
 /*
@@ -38,32 +35,45 @@ typedef struct Dwarf_Global_Context_s *Dwarf_Global_Context;
     Essentially, they contain the context for a set of pubnames
     belonging to a compilation-unit.
 
-    This is also used for the sgi-specific
+    Also used for the sgi-specific
     weaknames, typenames, varnames, funcnames data:
     the structs for those are incomplete and
     instances of this are used instead.
 
-    Also used for DWARF3 .debug_pubtypes.
+    Also used for DWARF3,4 .debug_pubtypes and DWARF5 .debug_names.
 
     These never refer to .debug_types, only to .debug_info.
-
 */
 struct Dwarf_Global_Context_s {
+    unsigned pu_is_dnames; /* 0 if not .debug_names. */
+    unsigned pu_alloc_type; /* DW_DLA something */
+    Dwarf_Debug pu_dbg;
 
-    /*  For this context, size of a length. 4 or 8 */
+    /*  One of DW_GL_GLOBAL,DW_GL_PUBTYPES,etc */
+    int      pu_global_category;
+
+    /*  The following set with the DW_TAG of the DIE
+        involved.  Left 0 with .debug_pubnames. */
+    Dwarf_Bool  pu_is_debug_names;
+
+    /*  For DWARF5 .debug_names the following
+        are irellevant, left 0. */
+    /*  For this context, size of a length (offset). 4 or 8 */
     unsigned char pu_length_size;
 
-    /* Size of the pubnames data for the CU */
+    /* Size of the data section for the CU */
     unsigned char pu_length;
 
-    /*  For this CU, size of the extension 0 except
-        for dwarf2 extension 64bit, in which case is 4. */
+    /*  For this CU, size of the extension. 0 except
+        for dwarf2 extension (IRIX) 64bit, in which case is 4. */
     unsigned char pu_extension_size;
 
-    Dwarf_Half pu_version; /* 2,3, or 4 */
+    Dwarf_Half pu_version; /* 2,3,4 or 5 */
 
-    /*  offset in pubnames of the  pu header. */
+    /*  offset in pubnames or debug_names of the  pu header. */
     Dwarf_Off      pu_pub_offset;
+    /*  One past end of the section entries for this CU. */
+    Dwarf_Byte_Ptr pu_pub_entries_end_ptr;
 
     /*  Offset into .debug_info of the compilation-unit header
         (not DIE) for this set of pubnames. */
@@ -72,11 +82,7 @@ struct Dwarf_Global_Context_s {
     /*  Size of compilation-unit that these pubnames are in. */
     Dwarf_Unsigned pu_info_length;
 
-    unsigned pu_alloc_type; /* DW_DLA something */
-
-    Dwarf_Debug pu_dbg;
 };
-
 
 /* This struct contains information for a single pubname. */
 struct Dwarf_Global_s {
@@ -91,14 +97,23 @@ struct Dwarf_Global_s {
     /* Context for this pubname. */
     Dwarf_Global_Context gl_context;
 
-    unsigned gl_alloc_type; /* DW_DLA something */
+    Dwarf_Half gl_alloc_type; /* DW_DLA something */
+    Dwarf_Half gl_tag; /*  .debug_names only. Else 0. */
 };
+
+/*  In all but pubnames, head_chain and globals
+    should be passed in as NULL.
+    So that .debug_names entries can be added to the chain
+    before making an array.
+*/
 
 int _dwarf_internal_get_pubnames_like_data(Dwarf_Debug dbg,
     const char     *secname,
     Dwarf_Small    *section_data_ptr,
     Dwarf_Unsigned  section_length,
     Dwarf_Global ** globals,
+    Dwarf_Chain  *  head_chain,
+    Dwarf_Chain  ** plast_chain,
     Dwarf_Signed *  return_count,
     Dwarf_Error *   error,
     int             context_code,
@@ -106,16 +121,15 @@ int _dwarf_internal_get_pubnames_like_data(Dwarf_Debug dbg,
     int             length_err_num,
     int             version_err_num);
 
-void
-_dwarf_internal_globals_dealloc( Dwarf_Debug dbg, Dwarf_Global *dwgl,
-    Dwarf_Signed count);
+void _dwarf_internal_globals_dealloc( Dwarf_Debug dbg,
+    Dwarf_Global *dwgl, Dwarf_Signed count);
 
 #ifdef __sgi  /* __sgi should only be defined for IRIX/MIPS. */
 void _dwarf_fix_up_offset_irix(Dwarf_Debug dbg,
     Dwarf_Unsigned *varp,
     char *caller_site_name);
 #define FIX_UP_OFFSET_IRIX_BUG(ldbg,var,name) \
-    _dwarf_fix_up_offset_irix(ldbg,&var,name)
+    _dwarf_fix_up_offset_irix((ldbg),&(var),(name))
 #else  /* ! __sgi */
 #define FIX_UP_OFFSET_IRIX_BUG(ldbg,var,name)
 #endif /* __sgi */

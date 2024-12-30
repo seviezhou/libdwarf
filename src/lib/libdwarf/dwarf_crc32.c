@@ -1,4 +1,5 @@
 /*
+
    Copyright (C) 2020 David Anderson. All Rights Reserved.
 
    This program is free software; you can redistribute it
@@ -25,73 +26,61 @@
    Fifth Floor, Boston MA 02110-1301, USA.
 */
 
+#include <config.h>
 
-#include "config.h"
+#include <stddef.h> /* size_t */
+#include <stdio.h>  /* SEEK_END SEEK_SET */
+#include <stdlib.h> /* free() malloc() */
+#include <string.h> /* memcpy() */
 
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h> /* for free() */
-#endif /* HAVE_STDLIB_H */
-
-#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h> /* open(), off_t, size_t, ssize_t */
-#endif /* HAVE_SYS_TYPES_H */
-#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h> /* off_t ssize_t */
-#endif /* HAVE_SYS_TYPES_H */
-#ifdef HAVE_SYS_STAT_H
-#include <sys/stat.h>
-#endif /* HAVE_SYS_STAT_H */
-#include <fcntl.h>
-
-#ifdef HAVE_UNISTD_H
-#include <unistd.h>
-#elif defined(_WIN32) && defined(_MSC_VER)
-/*  Want to have SEEK_CUR and SEEK_SET defined. */
-#include <io.h>
-#include <basetsd.h>
-/*  Should we have include <windows.h> instead? */
-typedef SSIZE_T ssize_t; /* MSVC does not have POSIX ssize_t */
-#endif /* HAVE_UNISTD_H */
-
-#ifdef HAVE_MALLOC_H
-/* Useful include for some Windows compilers. */
-#include <malloc.h>
-#endif /* HAVE_MALLOC_H */
-
-#include "dwarf_incl.h"
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_util.h"
+#include "dwarf_opaque.h"
 #include "dwarf_error.h"
-
-unsigned int
-dwarf_basic_crc32 (const unsigned char *buf,
-    unsigned long len,
-    unsigned int init)
-{
-    return _dwarf_crc32(init,buf,len);
-}
 
 /*  Returns DW_DLV_OK DW_DLV_NO_ENTRY or DW_DLV_ERROR
     crc32 used for debuglink crc calculation.
-    Caller passes pointer to array of 4 unsighed char
-    and if this returns DW_DLV_OK that is filled in.*/
+    Caller passes pointer to an
+    uninitialized array of 4 unsigned char
+    and if this returns DW_DLV_OK that is filled in.
+    The crc is calculated based on reading
+    the entire current open
+    Dwarf_Debug dbg object file and all bytes in
+    the file are read to create  the crc.
+
+    In Windows, where unsigned int is 16 bits, this
+    produces different output than on 32bit ints.
+
+    Since lseek() (all systems/versions) returns
+    a signed value, we check for < 0 as error
+    rather than just check for -1. So it is clear
+    to symbolic exectution that conversion to
+    unsigned does not lose bits.
+*/
 int
 dwarf_crc32 (Dwarf_Debug dbg,unsigned char *crcbuf,
     Dwarf_Error *error)
 {
-    off_t size_left = 0;
-    off_t fsize = 0;
-    off_t lsval = 0;
-    ssize_t readlen = 1000;
-    unsigned char *readbuf = 0;
-    ssize_t readval = 0;
-    unsigned int tcrc = 0;
-    unsigned int init = 0;
-    int fd = -1;
+    /*  off_t is signed,    defined by POSIX */
+    /*  ssize_t is signed,  defined in POSIX */
 
-    if (!dbg) {
-        _dwarf_error_string(dbg,error,DW_DLE_DBG_NULL,
-            "DW_DLE_DBG_NULL: Bad call to dwarf_crc32");
-        return DW_DLV_ERROR;
-    }
+    /*  size_t is unsigned, defined in C89. */
+    Dwarf_Unsigned   fsize = 0;
+    /*  Named with u to remind the reader that this is
+        an unsigned value. */
+    Dwarf_Unsigned  readlenu = 10000;
+    Dwarf_Unsigned  size_left = 0;
+    const unsigned char *readbuf = 0;
+    unsigned int   tcrc = 0;
+    unsigned int   init = 0;
+    int            fd = -1;
+    Dwarf_Unsigned   sz = 0;
+    int            res = 0;
+
+    CHECK_DBG(dbg,error,"dwarf_crc32()");
     if (!crcbuf) {
         return DW_DLV_NO_ENTRY;
     }
@@ -104,29 +93,31 @@ dwarf_crc32 (Dwarf_Debug dbg,unsigned char *crcbuf,
     }
     fd = dbg->de_fd;
     if (dbg->de_filesize) {
-        fsize = size_left = dbg->de_filesize;
+        fsize = (size_t)dbg->de_filesize;
     } else {
-        fsize = size_left = lseek(fd,0L,SEEK_END);
-        if (fsize   == (off_t)-1) {
+        res = _dwarf_seekr(fd,0,SEEK_END,&sz);
+        if (res != DW_DLV_OK) {
             _dwarf_error_string(dbg,error,DW_DLE_SEEK_ERROR,
                 "DW_DLE_SEEK_ERROR: dwarf_crc32 seek "
                 "to end fails");
             return DW_DLV_ERROR;
         }
+        fsize = sz;
     }
-    if (fsize <= (off_t)500) {
+    if (fsize <= (Dwarf_Unsigned)500) {
         /*  Not a real object file.
             A random length check. */
         return DW_DLV_NO_ENTRY;
     }
-    lsval  = lseek(fd,0L,SEEK_SET);
-    if (lsval < 0) {
+    size_left = fsize;
+    res = _dwarf_seekr(fd,0,SEEK_SET,0);
+    if (res != DW_DLV_OK) {
         _dwarf_error_string(dbg,error,DW_DLE_SEEK_ERROR,
             "DW_DLE_SEEK_ERROR: dwarf_crc32 seek "
             "to start fails");
         return DW_DLV_ERROR;
     }
-    readbuf = (unsigned char *)malloc(readlen);
+    readbuf = (unsigned char *)malloc(readlenu);
     if (!readbuf) {
         _dwarf_error_string(dbg,error,DW_DLE_ALLOC_FAIL,
             "DW_DLE_ALLOC_FAIL: dwarf_crc32 read buffer"
@@ -134,22 +125,25 @@ dwarf_crc32 (Dwarf_Debug dbg,unsigned char *crcbuf,
         return DW_DLV_ERROR;
     }
     while (size_left > 0) {
-        if (size_left < readlen) {
-            readlen = size_left;
+        if (size_left < readlenu) {
+            readlenu = size_left;
         }
-        readval = read(fd,readbuf,readlen);
-        if (readval != (ssize_t)readlen) {
+        res = _dwarf_readr(fd,(char *)readbuf,readlenu,0);
+        if (res != DW_DLV_OK) {
             _dwarf_error_string(dbg,error,DW_DLE_READ_ERROR,
                 "DW_DLE_READ_ERROR: dwarf_crc32 read fails ");
-            free(readbuf);
+            free((unsigned char*)readbuf);
             return DW_DLV_ERROR;
         }
-        tcrc = _dwarf_crc32(init,readbuf,readlen);
+        /*  Call the public API function so it gets tested too. */
+        tcrc = (unsigned int)dwarf_basic_crc32(readbuf,
+            (unsigned long)readlenu,
+            (unsigned long)init);
         init = tcrc;
-        size_left -= readlen;
+        size_left -= readlenu;
     }
     /*  endianness issues?  */
-    free(readbuf);
+    free((unsigned char*)readbuf);
     memcpy(crcbuf,(void *)&tcrc,4);
     return DW_DLV_OK;
 }

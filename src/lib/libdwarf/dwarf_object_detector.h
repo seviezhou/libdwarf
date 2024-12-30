@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, David Anderson
+/* Copyright (c) 2018-2023, David Anderson
 All rights reserved.
 
 Redistribution and use in source and binary forms, with
@@ -36,7 +36,6 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 extern "C" {
 #endif /* __cplusplus */
 
-
 /*  Declares the interface function.
     outpath is a place you provide, of a length outpath_len
     you consider reasonable,
@@ -56,12 +55,6 @@ extern "C" {
 #define DW_FTYPE_PE      3
 #define DW_FTYPE_ARCHIVE 4  /* unix archive */
 #endif /* DW_FTYPE_UNKNOWN */
-
-#ifndef DW_ENDIAN_UNKNOWN
-#define DW_ENDIAN_UNKNOWN 0
-#define DW_ENDIAN_BIG     1
-#define DW_ENDIAN_LITTLE  2
-#endif /* DW_ENDIAN_UNKNOWN */
 
 /*  offsetsize refers to the object-file-format.
     Elf 32 or macho-32 or PE 32, for example.
@@ -83,21 +76,14 @@ extern "C" {
     *errcode when the function returns DW_DLV_ERROR)
     will hopefully suffice for most purposes. */
 
-int dwarf_object_detector_path(const char  *path,
-    char *outpath,
-    unsigned long outpath_len,
-    unsigned *ftype,
-    unsigned *endian,
-    unsigned *offsetsize,
-    Dwarf_Unsigned  *filesize,
-    int * errcode);
-
-int dwarf_object_detector_fd(int fd,
-    unsigned *ftype,
-    unsigned *endian,
-    unsigned *offsetsize,
-    Dwarf_Unsigned  *filesize,
-    int * errcode);
+/*  Added September 2023 for Mach-O universal binaries */
+int _dwarf_object_detector_fd_a(int dw_fd,
+    unsigned int   *dw_ftype,
+    unsigned int   *dw_endian,
+    unsigned int   *dw_offsetsize,
+    Dwarf_Unsigned dw_offset_base,
+    Dwarf_Unsigned *dw_filesize,
+    int            *dw_errcode);
 
 #ifdef __cplusplus
 }

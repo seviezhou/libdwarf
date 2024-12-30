@@ -1,5 +1,4 @@
-/*
-Copyright 2018 David Anderson. All rights reserved.
+/* Copyright 2018 David Anderson. All rights reserved.
 
 Redistribution and use in source and binary forms, with
 or without modification, are permitted provided that the
@@ -50,65 +49,30 @@ calls
             or    calls generic_rel_from_rel64(ep,gsh,relp,grel...
 */
 
+#include <config.h>
 
-#include "config.h"
-#include <stdio.h>
-#ifdef HAVE_STRING_H
-#include <string.h> /* For memcpy etc */
-#endif /* HAVE_STRING_H */
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif /* HAVE_STDLIB_H */
-#ifdef HAVE_MALLOC_H
-/* Useful include for some Windows compilers. */
-#include <malloc.h>
-#endif /* HAVE_MALLOC_H */
-#include <stddef.h>
-#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h> /* open(), off_t, size_t, ssize_t */
-#endif /* HAVE_SYS_TYPES_H */
-#ifdef HAVE_SYS_STAT_H
-#include <sys/stat.h>   /* for open() */
-#endif /* HAVE_SYS_STAT_H */
-#include <fcntl.h>   /* for open() */
-#ifdef HAVE_UNISTD_H
-#include <unistd.h> /* lseek read close */
-#elif defined(_WIN32) && defined(_MSC_VER)
-#include <io.h>
-#endif /* HAVE_UNISTD_H */
+#include <stddef.h> /* size_t */
+#include <stdlib.h> /* calloc() free() malloc() */
+#include <stdio.h> /* printf debugging */
+#include <string.h> /* memcpy() strcmp() strdup()
+    strlen() strncmp() */
 
-/* Windows specific header files */
-#if defined(_WIN32) && defined(HAVE_STDAFX_H)
-#include "stdafx.h"
-#endif /* HAVE_STDAFX_H */
-
-#include "libdwarf_private.h"
 #include "dwarf.h"
 #include "libdwarf.h"
+#include "libdwarf_private.h"
 #include "dwarf_base_types.h"
 #include "dwarf_opaque.h"
-#include "memcpy_swap.h"
-#include "dwarf_elfstructs.h"
+#include "dwarf_memcpy_swap.h"
 #include "dwarf_reading.h"
 #include "dwarf_elf_defines.h"
+#include "dwarf_elfstructs.h"
 #include "dwarf_elfread.h"
 #include "dwarf_object_detector.h"
 #include "dwarf_object_read_common.h"
 #include "dwarf_util.h"
+#include "dwarf_secname_ck.h"
 
-#ifndef O_BINARY
-#define O_BINARY 0
-#endif /* O_BINARY */
-
-#ifdef HAVE_UNUSED_ATTRIBUTE
-#define  UNUSEDARG __attribute__ ((unused))
-#else
-#define  UNUSEDARG
-#endif
-#define TRUE  1
-#define FALSE 0
-
-#if 0
+#if 0 /* debugging only dumpsizes() */
 /*  One example of calling this.
     place just before DW_DLE_SECTION_SIZE_OR_OFFSET_LARGE
     dumpsizes(__LINE__,strsectlength,strpsh->gh_offset,
@@ -124,31 +88,42 @@ dumpsizes(int line,Dwarf_Unsigned s,
         "sum 0x%llx line %d \n",
         s,o,fsz,tlen,line);
 }
-#endif
+#endif /*0*/
 
-#ifdef WORDS_BIGENDIAN
-#define ASNAR(func,t,s)                         \
-    do {                                        \
-        unsigned tbyte = sizeof(t) - sizeof(s); \
-        t = 0;                                  \
-        func(((char *)&t)+tbyte ,&s[0],sizeof(s));  \
-    } while (0)
-#else /* LITTLE ENDIAN */
-#define ASNAR(func,t,s)                         \
-    do {                                        \
-        t = 0;                                  \
-        func(&t,&s[0],sizeof(s));               \
-    } while (0)
-#endif /* end LITTLE- BIG-ENDIAN */
+int nibblecounts[16] = {
+0,1,1,2,
+1,2,2,3,
+2,2,2,3,
+2,3,3,4
+};
+
+static int
+getbitsoncount(Dwarf_Unsigned v_in)
+{
+    int           bitscount = 0;
+    Dwarf_Unsigned v = v_in;
+
+    while (v) {
+        unsigned int nibble = v & 0xf;
+        bitscount += nibblecounts[nibble];
+        v >>= 4;
+    }
+    return bitscount;
+}
 
 static int
 _dwarf_load_elf_section_is_dwarf(const char *sname,
+    Dwarf_Unsigned sectype,
     int *is_rela,int *is_rel)
 {
     *is_rel = FALSE;
     *is_rela = FALSE;
     if (_dwarf_ignorethissection(sname)) {
         return FALSE;
+    }
+    if (sectype == SHT_RELA) {
+        *is_rela = TRUE;
+        return TRUE;
     }
     if (!strncmp(sname,".rel",4)) {
         if (!strncmp(sname,".rela.",6)) {
@@ -177,7 +152,6 @@ _dwarf_load_elf_section_is_dwarf(const char *sname,
     return FALSE;
 }
 
-
 static int
 is_empty_section(Dwarf_Unsigned type)
 {
@@ -190,122 +164,10 @@ is_empty_section(Dwarf_Unsigned type)
     return FALSE;
 }
 
-#if 0
-int
-dwarf_construct_elf_access_path(const char *path,
-    dwarf_elf_object_access_internals_t **mp,int *errcode)
-{
-    int fd = -1;
-    int res = 0;
-    dwarf_elf_object_access_internals_t *mymp = 0;
-
-    fd = open(path, O_RDONLY|O_BINARY);
-    if (fd < 0) {
-        *errcode = DW_DLE_PATH_SIZE_TOO_SMALL;
-        return DW_DLV_ERROR;
-    }
-    res = dwarf_construct_elf_access(fd,
-        path,&mymp,errcode);
-    if (res != DW_DLV_OK) {
-        close(fd);
-        return res;
-    }
-    mymp->f_destruct_close_fd = TRUE;
-    *mp = mymp;
-    return res;
-}
-#endif /* 0 */
-
-/* Here path is not essential. Pass in with "" if unknown. */
-int
-dwarf_construct_elf_access(int fd,
-    const char *path,
-    dwarf_elf_object_access_internals_t **mp,int *errcode)
-{
-    unsigned ftype = 0;
-    unsigned endian = 0;
-    unsigned offsetsize = 0;
-    Dwarf_Unsigned filesize = 0;
-    dwarf_elf_object_access_internals_t *mfp = 0;
-    int      res = 0;
-
-    res = dwarf_object_detector_fd(fd,
-        &ftype,&endian,&offsetsize, &filesize, errcode);
-    if (res != DW_DLV_OK) {
-        return res;
-    }
-
-    mfp = calloc(1,sizeof(dwarf_elf_object_access_internals_t));
-    if (!mfp) {
-        *errcode = DW_DLE_ALLOC_FAIL;
-        return DW_DLV_ERROR;
-    }
-    /* For non-libelf Elf, call it 'F'. Libelf Elf uses 'E' */
-    mfp->f_ident[0] = 'F';
-    mfp->f_ident[1] = 1;
-    mfp->f_fd = fd;
-    mfp->f_destruct_close_fd = FALSE;
-    mfp->f_is_64bit =  ((offsetsize==64)?TRUE:FALSE);
-    mfp->f_filesize = filesize;
-    mfp->f_offsetsize = offsetsize;
-    mfp->f_pointersize = offsetsize;
-    mfp->f_endian = endian;
-    mfp->f_ftype = ftype;
-    mfp->f_path = strdup(path);
-
-    *mp = mfp;
-    return DW_DLV_OK;
-}
-
-/*  Caller must zero the passed in pointer
-    after this returns to remind
-    the caller to avoid use of the pointer. */
-int
-dwarf_destruct_elf_access(dwarf_elf_object_access_internals_t* ep,
-    UNUSEDARG int *errcode)
-{
-    struct generic_shdr *shp = 0;
-    Dwarf_Unsigned shcount = 0;
-    Dwarf_Unsigned i = 0;
-
-    free(ep->f_ehdr);
-    shp = ep->f_shdr;
-    shcount = ep->f_loc_shdr.g_count;
-    for (i = 0; i < shcount; ++i,++shp) {
-        free(shp->gh_rels);
-        shp->gh_rels = 0;
-        free(shp->gh_content);
-        shp->gh_content = 0;
-        free(shp->gh_sht_group_array);
-        shp->gh_sht_group_array = 0;
-        shp->gh_sht_group_array_count = 0;
-    }
-    free(ep->f_shdr);
-    free(ep->f_phdr);
-    free(ep->f_elf_shstrings_data);
-    free(ep->f_dynamic);
-    free(ep->f_symtab_sect_strings);
-    free(ep->f_dynsym_sect_strings);
-    free(ep->f_symtab);
-    free(ep->f_dynsym);
-
-    /* if TRUE close f_fd on destruct.*/
-    if (ep->f_destruct_close_fd) {
-        close(ep->f_fd);
-    }
-    ep->f_ident[0] = 'X';
-    free(ep->f_path);
-    free(ep);
-    return DW_DLV_OK;
-}
-
-
-
-
 static int
 generic_ehdr_from_32(dwarf_elf_object_access_internals_t *ep,
     struct generic_ehdr *ehdr, dw_elf32_ehdr *e,
-    UNUSEDARG int *errcode)
+    int *errcode)
 {
     int i = 0;
 
@@ -325,7 +187,45 @@ generic_ehdr_from_32(dwarf_elf_object_access_internals_t *ep,
     ASNAR(ep->f_copy_word,ehdr->ge_shentsize,e->e_shentsize);
     ASNAR(ep->f_copy_word,ehdr->ge_shnum,e->e_shnum);
     ASNAR(ep->f_copy_word,ehdr->ge_shstrndx,e->e_shstrndx);
-    ep->f_machine = ehdr->ge_machine;
+    if (!ehdr->ge_shoff) {
+        return DW_DLV_NO_ENTRY;
+    }
+    if (ehdr->ge_shoff < sizeof(dw_elf32_ehdr)) {
+        /* offset is inside the header! */
+        *errcode = DW_DLE_TOO_FEW_SECTIONS;
+        return DW_DLV_ERROR;
+    }
+    if (ehdr->ge_shstrndx == SHN_XINDEX) {
+        ehdr->ge_strndx_extended = TRUE;
+    } else {
+        ehdr->ge_strndx_in_strndx = TRUE;
+        if (ehdr->ge_shstrndx < 1) {
+            *errcode = DW_DLE_NO_SECT_STRINGS;
+            return DW_DLV_ERROR;
+        }
+    }
+    /*  If !ge_strndx_extended && !ehdr->ge_shnum
+        this is a very unusual case.  */
+    if (!ehdr->ge_shnum) {
+        ehdr->ge_shnum_extended = TRUE;
+    } else {
+        ehdr->ge_shnum_in_shnum = TRUE;
+        if (!ehdr->ge_shnum) {
+            return DW_DLV_NO_ENTRY;
+        }
+        if (ehdr->ge_shnum < 3) {
+            *errcode = DW_DLE_TOO_FEW_SECTIONS;
+            return DW_DLV_ERROR;
+        }
+    }
+    if (ehdr->ge_shnum_in_shnum &&
+        ehdr->ge_strndx_in_strndx &&
+        (ehdr->ge_shstrndx >= ehdr->ge_shnum)) {
+            *errcode = DW_DLE_NO_SECT_STRINGS;
+            return DW_DLV_ERROR;
+    }
+
+    ep->f_machine = (unsigned int)ehdr->ge_machine;
     ep->f_ehdr = ehdr;
     ep->f_loc_ehdr.g_name = "Elf File Header";
     ep->f_loc_ehdr.g_offset = 0;
@@ -338,7 +238,7 @@ generic_ehdr_from_32(dwarf_elf_object_access_internals_t *ep,
 static int
 generic_ehdr_from_64(dwarf_elf_object_access_internals_t* ep,
     struct generic_ehdr *ehdr, dw_elf64_ehdr *e,
-    UNUSEDARG int *errcode)
+    int *errcode)
 {
     int i = 0;
 
@@ -358,7 +258,42 @@ generic_ehdr_from_64(dwarf_elf_object_access_internals_t* ep,
     ASNAR(ep->f_copy_word,ehdr->ge_shentsize,e->e_shentsize);
     ASNAR(ep->f_copy_word,ehdr->ge_shnum,e->e_shnum);
     ASNAR(ep->f_copy_word,ehdr->ge_shstrndx,e->e_shstrndx);
-    ep->f_machine = ehdr->ge_machine;
+    if (!ehdr->ge_shoff) {
+        return DW_DLV_NO_ENTRY;
+    }
+    if (ehdr->ge_shoff < sizeof(dw_elf64_ehdr)) {
+        /* zero or offset is inside the header! */
+        *errcode = DW_DLE_TOO_FEW_SECTIONS;
+        return DW_DLV_ERROR;
+    }
+    if (ehdr->ge_shstrndx == SHN_XINDEX) {
+        ehdr->ge_strndx_extended = TRUE;
+    } else {
+        ehdr->ge_strndx_in_strndx = TRUE;
+        if (ehdr->ge_shstrndx < 1) {
+            *errcode = DW_DLE_NO_SECT_STRINGS;
+            return DW_DLV_ERROR;
+        }
+    }
+    if (!ehdr->ge_shnum) {
+        ehdr->ge_shnum_extended = TRUE;
+    } else {
+        ehdr->ge_shnum_in_shnum = TRUE;
+        if (!ehdr->ge_shnum) {
+            return DW_DLV_NO_ENTRY;
+        }
+        if (ehdr->ge_shnum < 3) {
+            *errcode = DW_DLE_TOO_FEW_SECTIONS;
+            return DW_DLV_ERROR;
+        }
+    }
+    if (ehdr->ge_shnum_in_shnum &&
+        ehdr->ge_strndx_in_strndx &&
+        (ehdr->ge_shstrndx >= ehdr->ge_shnum)) {
+            *errcode = DW_DLE_NO_SECT_STRINGS;
+            return DW_DLV_ERROR;
+    }
+    ep->f_machine = (unsigned int)ehdr->ge_machine;
     ep->f_ehdr = ehdr;
     ep->f_loc_ehdr.g_name = "Elf File Header";
     ep->f_loc_ehdr.g_offset = 0;
@@ -368,8 +303,7 @@ generic_ehdr_from_64(dwarf_elf_object_access_internals_t* ep,
     return DW_DLV_OK;
 }
 
-
-#if 0 /* not used */
+#if 0 /* ngeneric_phdr_from_phdr32 not needed */
 static int
 generic_phdr_from_phdr32(dwarf_elf_object_access_internals_t* ep,
     struct generic_phdr **phdr_out,
@@ -491,7 +425,25 @@ generic_phdr_from_phdr64(dwarf_elf_object_access_internals_t* ep,
     ep->f_loc_phdr.g_totalsize = sizeof(dw_elf64_phdr)*count;
     return DW_DLV_OK;
 }
-#endif /* not used */
+#endif /*0*/
+
+static void
+copysection32(
+    dwarf_elf_object_access_internals_t *ep,
+    struct generic_shdr *gshdr,
+    dw_elf32_shdr *psh)
+{
+    ASNAR(ep->f_copy_word,gshdr->gh_name,psh->sh_name);
+    ASNAR(ep->f_copy_word,gshdr->gh_type,psh->sh_type);
+    ASNAR(ep->f_copy_word,gshdr->gh_flags,psh->sh_flags);
+    ASNAR(ep->f_copy_word,gshdr->gh_addr,psh->sh_addr);
+    ASNAR(ep->f_copy_word,gshdr->gh_offset,psh->sh_offset);
+    ASNAR(ep->f_copy_word,gshdr->gh_size,psh->sh_size);
+    ASNAR(ep->f_copy_word,gshdr->gh_link,psh->sh_link);
+    ASNAR(ep->f_copy_word,gshdr->gh_info,psh->sh_info);
+    ASNAR(ep->f_copy_word,gshdr->gh_addralign,psh->sh_addralign);
+    ASNAR(ep->f_copy_word,gshdr->gh_entsize,psh->sh_entsize);
+}
 
 static int
 generic_shdr_from_shdr32(dwarf_elf_object_access_internals_t *ep,
@@ -503,6 +455,7 @@ generic_shdr_from_shdr32(dwarf_elf_object_access_internals_t *ep,
 {
     dw_elf32_shdr          *psh =0;
     dw_elf32_shdr          *orig_psh =0;
+    struct generic_ehdr *ehdr = ep->f_ehdr;
     struct generic_shdr *gshdr =0;
     struct generic_shdr *orig_gshdr =0;
     Dwarf_Unsigned i = 0;
@@ -526,23 +479,61 @@ generic_shdr_from_shdr32(dwarf_elf_object_access_internals_t *ep,
     res = RRMOA(ep->f_fd,psh,offset,count*entsize,
         ep->f_filesize,errcode);
     if (res != DW_DLV_OK) {
-        free(psh);
-        free(gshdr);
+        free(orig_psh);
+        free(orig_gshdr);
         return res;
     }
     for (i = 0; i < count;
         ++i,  psh++,gshdr++) {
+        int isempty     = FALSE;
+        int bitsoncount = 0;
+
         gshdr->gh_secnum = i;
-        ASNAR(ep->f_copy_word,gshdr->gh_name,psh->sh_name);
-        ASNAR(ep->f_copy_word,gshdr->gh_type,psh->sh_type);
-        ASNAR(ep->f_copy_word,gshdr->gh_flags,psh->sh_flags);
-        ASNAR(ep->f_copy_word,gshdr->gh_addr,psh->sh_addr);
-        ASNAR(ep->f_copy_word,gshdr->gh_offset,psh->sh_offset);
-        ASNAR(ep->f_copy_word,gshdr->gh_size,psh->sh_size);
-        ASNAR(ep->f_copy_word,gshdr->gh_link,psh->sh_link);
-        ASNAR(ep->f_copy_word,gshdr->gh_info,psh->sh_info);
-        ASNAR(ep->f_copy_word,gshdr->gh_addralign,psh->sh_addralign);
-        ASNAR(ep->f_copy_word,gshdr->gh_entsize,psh->sh_entsize);
+        copysection32(ep,gshdr,psh);
+#if 1
+        if (gshdr->gh_size >= ep->f_filesize &&
+            gshdr->gh_type != SHT_NOBITS) {
+            free(orig_psh);
+            free(orig_gshdr);
+            *errcode = DW_DLE_SECTION_SIZE_ERROR;
+            return DW_DLV_ERROR;
+        }
+#endif /* 0 */
+        isempty = is_empty_section(gshdr->gh_type);
+        if (i == 0) {
+            Dwarf_Unsigned shnum = 0;
+            Dwarf_Unsigned shstrx = 0;
+
+            /*  Catch errors asap */
+            if (!ehdr->ge_shnum_extended) {
+                shnum = gshdr->gh_size;
+            }
+            if (!ehdr->ge_strndx_extended) {
+                shstrx = gshdr->gh_link;
+            }
+            /*  We require that section zero be 'empty'
+                per the Elf ABI.
+                gh_link and gh_size are sometimes used
+                with the elf header, so we do not check
+                them here. */
+            if (!isempty || gshdr->gh_name || gshdr->gh_flags ||
+                shnum || shstrx ||
+                gshdr->gh_addr ||
+                gshdr->gh_info) {
+                free(orig_psh);
+                free(orig_gshdr);
+                *errcode = DW_DLE_IMPROPER_SECTION_ZERO;
+                return DW_DLV_ERROR;
+            }
+        }
+        bitsoncount = getbitsoncount(gshdr->gh_flags);
+        if (bitsoncount > 8) {
+            free(orig_psh);
+            free(orig_gshdr);
+            *errcode = DW_DLE_BAD_SECTION_FLAGS;
+            return DW_DLV_ERROR;
+        }
+
         if (gshdr->gh_type == SHT_REL || gshdr->gh_type == SHT_RELA){
             gshdr->gh_reloc_target_secnum = gshdr->gh_info;
         }
@@ -558,6 +549,24 @@ generic_shdr_from_shdr32(dwarf_elf_object_access_internals_t *ep,
     return DW_DLV_OK;
 }
 
+static void
+copysection64(
+    dwarf_elf_object_access_internals_t *ep,
+    struct generic_shdr *gshdr,
+    dw_elf64_shdr *psh)
+{
+    ASNAR(ep->f_copy_word,gshdr->gh_name,psh->sh_name);
+    ASNAR(ep->f_copy_word,gshdr->gh_type,psh->sh_type);
+    ASNAR(ep->f_copy_word,gshdr->gh_flags,psh->sh_flags);
+    ASNAR(ep->f_copy_word,gshdr->gh_addr,psh->sh_addr);
+    ASNAR(ep->f_copy_word,gshdr->gh_offset,psh->sh_offset);
+    ASNAR(ep->f_copy_word,gshdr->gh_size,psh->sh_size);
+    ASNAR(ep->f_copy_word,gshdr->gh_link,psh->sh_link);
+    ASNAR(ep->f_copy_word,gshdr->gh_info,psh->sh_info);
+    ASNAR(ep->f_copy_word,gshdr->gh_addralign,psh->sh_addralign);
+    ASNAR(ep->f_copy_word,gshdr->gh_entsize,psh->sh_entsize);
+}
+
 static int
 generic_shdr_from_shdr64(dwarf_elf_object_access_internals_t *ep,
     Dwarf_Unsigned * count_out,
@@ -570,6 +579,7 @@ generic_shdr_from_shdr64(dwarf_elf_object_access_internals_t *ep,
     dw_elf64_shdr          *orig_psh =0;
     struct generic_shdr *gshdr =0;
     struct generic_shdr *orig_gshdr =0;
+    struct generic_ehdr *ehdr = ep->f_ehdr;
     Dwarf_Unsigned i = 0;
     int res = 0;
 
@@ -585,29 +595,63 @@ generic_shdr_from_shdr64(dwarf_elf_object_access_internals_t *ep,
         *errcode = DW_DLE_ALLOC_FAIL;
         return DW_DLV_ERROR;
     }
-
     orig_psh = psh;
     orig_gshdr = gshdr;
     res = RRMOA(ep->f_fd,psh,offset,count*entsize,
         ep->f_filesize,errcode);
     if (res != DW_DLV_OK) {
-        free(psh);
-        free(gshdr);
+        free(orig_psh);
+        free(orig_gshdr);
         return res;
     }
     for ( i = 0; i < count;
         ++i,  psh++,gshdr++) {
+        int bitsoncount = 0;
+        int isempty = FALSE;
+
         gshdr->gh_secnum = i;
-        ASNAR(ep->f_copy_word,gshdr->gh_name,psh->sh_name);
-        ASNAR(ep->f_copy_word,gshdr->gh_type,psh->sh_type);
-        ASNAR(ep->f_copy_word,gshdr->gh_flags,psh->sh_flags);
-        ASNAR(ep->f_copy_word,gshdr->gh_addr,psh->sh_addr);
-        ASNAR(ep->f_copy_word,gshdr->gh_offset,psh->sh_offset);
-        ASNAR(ep->f_copy_word,gshdr->gh_size,psh->sh_size);
-        ASNAR(ep->f_copy_word,gshdr->gh_link,psh->sh_link);
-        ASNAR(ep->f_copy_word,gshdr->gh_info,psh->sh_info);
-        ASNAR(ep->f_copy_word,gshdr->gh_addralign,psh->sh_addralign);
-        ASNAR(ep->f_copy_word,gshdr->gh_entsize,psh->sh_entsize);
+        copysection64(ep,gshdr,psh);
+        if (gshdr->gh_size >= ep->f_filesize &&
+            gshdr->gh_type != SHT_NOBITS) {
+            free(orig_psh);
+            free(orig_gshdr);
+            *errcode = DW_DLE_SECTION_SIZE_ERROR;
+            return DW_DLV_ERROR;
+        }
+        isempty = is_empty_section(gshdr->gh_type);
+        if (i == 0) {
+            Dwarf_Unsigned shnum = 0;
+            Dwarf_Unsigned shstrx = 0;
+
+            /*  Catch errors asap */
+            if (!ehdr->ge_shnum_extended) {
+                shnum = gshdr->gh_size;
+            }
+            if (!ehdr->ge_strndx_extended) {
+                shstrx = gshdr->gh_link;
+            }
+            /*  We require that section zero be 'empty'
+                per the Elf ABI.
+                But gh_link  and gh_size might be used for
+                ge_shstrndx and ge_shnum, respectively*/
+            if (!isempty || gshdr->gh_name || gshdr->gh_flags ||
+                shnum || shstrx ||
+                gshdr->gh_addr ||
+                gshdr->gh_info) {
+                free(orig_psh);
+                free(orig_gshdr);
+                *errcode = DW_DLE_IMPROPER_SECTION_ZERO;
+                return DW_DLV_ERROR;
+            }
+        }
+        bitsoncount = getbitsoncount(gshdr->gh_flags);
+        if (bitsoncount > 8) {
+            free(orig_psh);
+            free(orig_gshdr);
+            *errcode = DW_DLE_BAD_SECTION_FLAGS;
+            return DW_DLV_ERROR;
+        }
+
         if (gshdr->gh_type == SHT_REL ||
             gshdr->gh_type == SHT_RELA){
             gshdr->gh_reloc_target_secnum = gshdr->gh_info;
@@ -624,10 +668,8 @@ generic_shdr_from_shdr64(dwarf_elf_object_access_internals_t *ep,
     return DW_DLV_OK;
 }
 
-
-
 static int
-dwarf_generic_elf_load_symbols32(
+_dwarf_generic_elf_load_symbols32(
     dwarf_elf_object_access_internals_t *ep,
     struct generic_symentry **gsym_out,
     Dwarf_Unsigned offset,Dwarf_Unsigned size,
@@ -645,7 +687,11 @@ dwarf_generic_elf_load_symbols32(
     ecount = (long)(size/sizeof(dw_elf32_sym));
     size2 = ecount * sizeof(dw_elf32_sym);
     if (size != size2) {
-        *errcode = DW_DLE_SECTION_SIZE_ERROR;
+        *errcode = DW_DLE_SYMBOL_SECTION_SIZE_ERROR;
+        return DW_DLV_ERROR;
+    }
+    if (size >= ep->f_filesize ) {
+        *errcode = DW_DLE_SYMBOL_SECTION_SIZE_ERROR;
         return DW_DLV_ERROR;
     }
     psym = calloc(ecount,sizeof(dw_elf32_sym));
@@ -689,9 +735,8 @@ dwarf_generic_elf_load_symbols32(
     return DW_DLV_OK;
 }
 
-
 static int
-dwarf_generic_elf_load_symbols64(
+_dwarf_generic_elf_load_symbols64(
     dwarf_elf_object_access_internals_t *ep,
     struct generic_symentry **gsym_out,
     Dwarf_Unsigned offset,Dwarf_Unsigned size,
@@ -709,7 +754,11 @@ dwarf_generic_elf_load_symbols64(
     ecount = (long)(size/sizeof(dw_elf64_sym));
     size2 = ecount * sizeof(dw_elf64_sym);
     if (size != size2) {
-        *errcode = DW_DLE_SECTION_SIZE_ERROR;
+        *errcode = DW_DLE_SYMBOL_SECTION_SIZE_ERROR;
+        return DW_DLV_ERROR;
+    }
+    if (size >= ep->f_filesize ) {
+        *errcode = DW_DLE_SYMBOL_SECTION_SIZE_ERROR;
         return DW_DLV_ERROR;
     }
     psym = calloc(ecount,sizeof(dw_elf64_sym));
@@ -755,9 +804,9 @@ dwarf_generic_elf_load_symbols64(
 }
 
 static int
-dwarf_generic_elf_load_symbols(
+_dwarf_generic_elf_load_symbols(
     dwarf_elf_object_access_internals_t *ep,
-    int secnum,
+    Dwarf_Unsigned secnum,
     struct generic_shdr *psh,
     struct generic_symentry **gsym_out,
     Dwarf_Unsigned *count_out,int *errcode)
@@ -774,12 +823,12 @@ dwarf_generic_elf_load_symbols(
         return DW_DLV_ERROR;
     }
     if (ep->f_offsetsize == 32) {
-        res = dwarf_generic_elf_load_symbols32(ep,
+        res = _dwarf_generic_elf_load_symbols32(ep,
             &gsym,
             psh->gh_offset,psh->gh_size,
             &count,errcode);
     } else if (ep->f_offsetsize == 64) {
-        res = dwarf_generic_elf_load_symbols64(ep,
+        res = _dwarf_generic_elf_load_symbols64(ep,
             &gsym,
             psh->gh_offset,psh->gh_size,
             &count,errcode);
@@ -793,7 +842,7 @@ dwarf_generic_elf_load_symbols(
     }
     return res;
 }
-#if 0
+#if 0 /* dwarf_load_elf_dynsym_symbols() not needed */
 int
 dwarf_load_elf_dynsym_symbols(
     dwarf_elf_object_access_internals_t *ep, int*errcode)
@@ -809,7 +858,7 @@ dwarf_load_elf_dynsym_symbols(
     }
     psh = ep->f_shdr + secnum;
     if we ever use this... gh_size big?
-    res = dwarf_generic_elf_load_symbols(ep,
+    res = _dwarf_generic_elf_load_symbols(ep,
         secnum,
         psh,
         &gsym,
@@ -820,7 +869,7 @@ dwarf_load_elf_dynsym_symbols(
     }
     return res;
 }
-#endif /* 0 */
+#endif /*0*/
 
 int
 _dwarf_load_elf_symtab_symbols(
@@ -840,7 +889,7 @@ _dwarf_load_elf_symtab_symbols(
         *errcode = DW_DLE_SECTION_SIZE_ERROR;
         return DW_DLV_ERROR;
     }
-    res = dwarf_generic_elf_load_symbols(ep,
+    res = _dwarf_generic_elf_load_symbols(ep,
         secnum,
         psh,
         &gsym,
@@ -867,8 +916,12 @@ generic_rel_from_rela32(
 
     ecount = size/sizeof(dw_elf32_rela);
     size2 = ecount * sizeof(dw_elf32_rela);
+    if (size >= ep->f_filesize) {
+        *errcode = DW_DLE_RELOCATION_SECTION_SIZE_ERROR;
+        return  DW_DLV_ERROR;
+    }
     if (size != size2) {
-        *errcode = DW_DLE_SECTION_SIZE_ERROR;
+        *errcode = DW_DLE_RELOCATION_SECTION_SIZE_ERROR;
         return  DW_DLV_ERROR;
     }
     for ( i = 0; i < ecount; ++i,++relp,++grel) {
@@ -895,14 +948,18 @@ generic_rel_from_rela64(
     Dwarf_Unsigned size = gsh->gh_size;
     Dwarf_Unsigned size2 = 0;
     Dwarf_Unsigned i = 0;
-    int objlittleendian = (ep->f_endian == DW_OBJECT_LSB);
+    int objlittleendian = (ep->f_endian == DW_END_little);
     int ismips64 = (ep->f_machine == EM_MIPS);
     int issparcv9 = (ep->f_machine == EM_SPARCV9);
 
     ecount = size/sizeof(dw_elf64_rela);
     size2 = ecount * sizeof(dw_elf64_rela);
+    if (size >= ep->f_filesize) {
+        *errcode = DW_DLE_RELOCATION_SECTION_SIZE_ERROR;
+        return  DW_DLV_ERROR;
+    }
     if (size != size2) {
-        *errcode = DW_DLE_SECTION_SIZE_ERROR;
+        *errcode = DW_DLE_RELOCATION_SECTION_SIZE_ERROR;
         return  DW_DLV_ERROR;
     }
     for ( i = 0; i < ecount; ++i,++relp,++grel) {
@@ -948,8 +1005,12 @@ generic_rel_from_rel32(
 
     ecount = size/sizeof(dw_elf32_rel);
     size2 = ecount * sizeof(dw_elf32_rel);
+    if (size >= ep->f_filesize) {
+        *errcode = DW_DLE_RELOCATION_SECTION_SIZE_ERROR;
+        return  DW_DLV_ERROR;
+    }
     if (size != size2) {
-        *errcode = DW_DLE_SECTION_SIZE_ERROR;
+        *errcode = DW_DLE_RELOCATION_SECTION_SIZE_ERROR;
         return  DW_DLV_ERROR;
     }
     for ( i = 0; i < ecount; ++i,++relp,++grel) {
@@ -974,14 +1035,18 @@ generic_rel_from_rel64(
     Dwarf_Unsigned size = gsh->gh_size;
     Dwarf_Unsigned size2 = 0;
     Dwarf_Unsigned i = 0;
-    int objlittleendian = (ep->f_endian == DW_OBJECT_LSB);
+    int objlittleendian = (ep->f_endian == DW_END_little);
     int ismips64 = (ep->f_machine == EM_MIPS);
     int issparcv9 = (ep->f_machine == EM_SPARCV9);
 
     ecount = size/sizeof(dw_elf64_rel);
     size2 = ecount * sizeof(dw_elf64_rel);
+    if (size >= ep->f_filesize) {
+        *errcode = DW_DLE_RELOCATION_SECTION_SIZE_ERROR;
+        return DW_DLV_ERROR;
+    }
     if (size != size2) {
-        *errcode = DW_DLE_SECTION_SIZE_ERROR;
+        *errcode = DW_DLE_RELOCATION_SECTION_SIZE_ERROR;
         return DW_DLV_ERROR;
     }
     for ( i = 0; i < ecount; ++i,++relp,++grel) {
@@ -1012,7 +1077,7 @@ generic_rel_from_rel64(
     return DW_DLV_OK;
 }
 
-#if 0
+#if 0 /* dwarf_load_elf_dynstr() not needed */
 int
 dwarf_load_elf_dynstr(
     dwarf_elf_object_access_internals_t *ep, int *errcode)
@@ -1051,7 +1116,7 @@ dwarf_load_elf_dynstr(
         }
     return DW_DLV_OK;
 }
-#endif /* 0 */
+#endif /*0*/
 
 int
 _dwarf_load_elf_symstr(
@@ -1100,7 +1165,6 @@ _dwarf_load_elf_symstr(
     return DW_DLV_OK;
 }
 
-
 static int
 _dwarf_elf_load_sectstrings(
     dwarf_elf_object_access_internals_t *ep,
@@ -1122,7 +1186,7 @@ _dwarf_elf_load_sectstrings(
         *errcode = DW_DLE_ELF_STRING_SECTION_MISSING;
         return DW_DLV_ERROR;
     }
-    if (secoffset    >=    ep->f_filesize ||
+    if (secoffset >= ep->f_filesize ||
         psh->gh_size > ep->f_filesize ||
         (secoffset + psh->gh_size) >
             ep->f_filesize) {
@@ -1146,22 +1210,95 @@ _dwarf_elf_load_sectstrings(
     return res;
 }
 
+static const dw_elf32_shdr shd32zero;
+static const struct generic_shdr  shdgzero;
+
+/*  Has a side effect of setting count, number
+    in the ehdr  ep points to. */
+static int
+get_counts_from_sec32_zero(
+    dwarf_elf_object_access_internals_t * ep,
+    Dwarf_Unsigned offset,
+    Dwarf_Bool     *have_shdr_count,
+    Dwarf_Unsigned *shdr_count,
+    Dwarf_Bool     *have_shstrndx_number,
+    Dwarf_Unsigned *shstrndx_number,
+    int            *errcode)
+{
+    dw_elf32_shdr       shd32;
+    struct generic_shdr shdg;
+    int res = 0;
+    Dwarf_Unsigned size = sizeof(shd32);
+    struct generic_ehdr * geh  = ep->f_ehdr;
+
+    shd32 =  shd32zero;
+    shdg  = shdgzero;
+    res = RRMOA(ep->f_fd,&shd32,offset,size,
+        ep->f_filesize,errcode);
+    if (res != DW_DLV_OK) {
+        return res;
+    }
+    copysection32(ep,&shdg,&shd32);
+    if (geh->ge_shnum_extended) {
+        geh->ge_shnum = shdg.gh_size;
+        geh->ge_shnum_in_shnum = TRUE;
+        if (geh->ge_shnum  < 3) {
+            *errcode = DW_DLE_TOO_FEW_SECTIONS;
+            return DW_DLV_ERROR;
+        }
+    }
+    *have_shdr_count = TRUE;
+    *shdr_count = geh->ge_shnum;
+    if (geh->ge_strndx_extended) {
+        geh->ge_shstrndx = shdg.gh_link;
+        geh->ge_strndx_in_strndx = TRUE;
+    }
+    if (geh->ge_shnum_in_shnum &&
+        geh->ge_strndx_in_strndx&&
+        (geh->ge_shstrndx >= geh->ge_shnum)) {
+            *errcode = DW_DLE_NO_SECT_STRINGS;
+            return DW_DLV_ERROR;
+    }
+    *have_shstrndx_number = TRUE;
+    *shstrndx_number = geh->ge_shstrndx;
+    return DW_DLV_OK;
+}
+
 static int
 elf_load_sectheaders32(
     dwarf_elf_object_access_internals_t *ep,
-    Dwarf_Unsigned offset,Dwarf_Unsigned entsize,
-    Dwarf_Unsigned count,int *errcode)
+    Dwarf_Unsigned offset,
+    Dwarf_Unsigned entsize,
+    Dwarf_Unsigned count,
+    int *errcode)
 {
     Dwarf_Unsigned generic_count = 0;
+    Dwarf_Unsigned shdr_count = 0;
+    Dwarf_Bool have_shdr_count = FALSE;
+    Dwarf_Unsigned shstrndx_number = 0;
+    Dwarf_Bool have_shstrndx_number = FALSE;
+    struct generic_ehdr *ehp = 0;
     int res = 0;
 
-
-    if (count == 0) {
-        return DW_DLV_NO_ENTRY;
-    }
     if (entsize < sizeof(dw_elf32_shdr)) {
         *errcode = DW_DLE_SECTION_SIZE_ERROR;
         return DW_DLV_ERROR;
+    }
+    ehp = ep->f_ehdr;
+    if (!ehp->ge_shnum_in_shnum || !ehp->ge_strndx_in_strndx) {
+        res = get_counts_from_sec32_zero(ep,offset,
+            &have_shdr_count,&shdr_count,
+            &have_shstrndx_number,&shstrndx_number,
+            errcode);
+        if (res != DW_DLV_OK) {
+            return res;
+        }
+        if (have_shdr_count) {
+            count = shdr_count;
+        }
+    }
+    if (count == 0) {
+        return DW_DLV_NO_ENTRY;
     }
     if ((offset > ep->f_filesize)||
         (entsize > 200)||
@@ -1181,6 +1318,58 @@ elf_load_sectheaders32(
     }
     return DW_DLV_OK;
 }
+static const dw_elf64_shdr shd64zero;
+/*  Has a side effect of setting count, number
+    in the ehdr  ep points to. */
+static int
+get_counts_from_sec64_zero(
+    dwarf_elf_object_access_internals_t * ep,
+    Dwarf_Unsigned offset,
+    Dwarf_Bool     *have_shdr_count,
+    Dwarf_Unsigned *shdr_count,
+    Dwarf_Bool     *have_shstrndx_number,
+    Dwarf_Unsigned *shstrndx_number,
+    int            *errcode)
+{
+    dw_elf64_shdr       shd64;
+    struct generic_shdr shdg;
+    int res = 0;
+    Dwarf_Unsigned size = sizeof(shd64);
+    struct generic_ehdr * geh  = ep->f_ehdr;
+
+    shd64 =  shd64zero;
+    shdg  = shdgzero;
+    res = RRMOA(ep->f_fd,&shd64,offset,size,
+        ep->f_filesize,errcode);
+    if (res != DW_DLV_OK) {
+        return res;
+    }
+    copysection64(ep,&shdg,&shd64);
+    if (geh->ge_shnum_extended) {
+        geh->ge_shnum = shdg.gh_size;
+        geh->ge_shnum_in_shnum = TRUE;
+        if (geh->ge_shnum  < 3) {
+            *errcode = DW_DLE_TOO_FEW_SECTIONS;
+            return DW_DLV_ERROR;
+        }
+    }
+    *have_shdr_count = TRUE;
+    *shdr_count = geh->ge_shnum;
+    if (geh->ge_strndx_extended) {
+        geh->ge_shstrndx = shdg.gh_link;
+        geh->ge_strndx_in_strndx = TRUE;
+    }
+    if (geh->ge_shnum_in_shnum    &&
+        geh->ge_strndx_in_strndx &&
+        (geh->ge_shstrndx >= geh->ge_shnum)) {
+            *errcode = DW_DLE_NO_SECT_STRINGS;
+            return DW_DLV_ERROR;
+    }
+
+    *have_shstrndx_number = TRUE;
+    *shstrndx_number = geh->ge_shstrndx;
+    return DW_DLV_OK;
+}
 
 static int
 elf_load_sectheaders64(
@@ -1189,9 +1378,26 @@ elf_load_sectheaders64(
     Dwarf_Unsigned count,int*errcode)
 {
     Dwarf_Unsigned generic_count = 0;
+    Dwarf_Unsigned shdr_count = 0;
+    Dwarf_Bool have_shdr_count = FALSE;
+    Dwarf_Unsigned shstrndx_number = 0;
+    Dwarf_Bool have_shstrndx_number = FALSE;
+    struct generic_ehdr *ehp = 0;
     int res = 0;
 
-
+    ehp = ep->f_ehdr;
+    if (!ehp->ge_shnum_in_shnum || !ehp->ge_strndx_in_strndx ) {
+        res = get_counts_from_sec64_zero(ep,offset,
+            &have_shdr_count,&shdr_count,
+            &have_shstrndx_number,&shstrndx_number,
+            errcode);
+        if (res != DW_DLV_OK) {
+            return res;
+        }
+        if (have_shdr_count) {
+            count = shdr_count;
+        }
+    }
     if (count == 0) {
         return DW_DLV_NO_ENTRY;
     }
@@ -1206,6 +1412,7 @@ elf_load_sectheaders64(
         *errcode = DW_DLE_SECTION_SIZE_OR_OFFSET_LARGE;
         return DW_DLV_ERROR;
     }
+
     res = generic_shdr_from_shdr64(ep,&generic_count,
         offset,entsize,count,errcode);
     if (res != DW_DLV_OK) {
@@ -1217,7 +1424,6 @@ elf_load_sectheaders64(
     }
     return DW_DLV_OK;
 }
-
 
 static int
 _dwarf_elf_load_a_relx_batch(
@@ -1383,7 +1589,6 @@ _dwarf_elf_load_a_relx_batch(
     return res;
 }
 
-
 /*  Is this rel/rela section related to dwarf at all?
     set oksecnum zero if not. Else set targ secnum.
     Never returns DW_DLV_NO_ENTRY. */
@@ -1394,7 +1599,7 @@ this_rel_is_a_section_dwarf_related(
     unsigned *oksecnum_out,
     int *errcode)
 {
-    unsigned oksecnum = 0;
+    Dwarf_Unsigned oksecnum = 0;
     struct generic_shdr *gstarg = 0;
 
     if (gshdr->gh_type != SHT_RELA &&
@@ -1413,7 +1618,7 @@ this_rel_is_a_section_dwarf_related(
         *oksecnum_out = 0; /* no reloc needed. */
         return DW_DLV_OK;
     }
-    *oksecnum_out = oksecnum;
+    *oksecnum_out = (unsigned)oksecnum;
     return DW_DLV_OK;
 }
 /*  Secnum here is the secnum of rela. Not
@@ -1484,6 +1689,7 @@ _dwarf_load_elf_relx(
     gshdr->gh_relcount = count_read;
     return DW_DLV_OK;
 }
+
 static int
 validate_section_name_string(Dwarf_Unsigned section_length,
     Dwarf_Unsigned string_loc_index,
@@ -1507,6 +1713,8 @@ validate_section_name_string(Dwarf_Unsigned section_length,
     return DW_DLV_ERROR;
 }
 
+/*  Without proper section names in place nothing
+    is going to work in reading DWARF sections. */
 static int
 _dwarf_elf_load_sect_namestring(
     dwarf_elf_object_access_internals_t *ep,
@@ -1522,21 +1730,36 @@ _dwarf_elf_load_sect_namestring(
     generic_count = ep->f_loc_shdr.g_count;
     for (i = 0; i < generic_count; i++, ++gshdr) {
         const char *namestr =
-            "<Invalid sh_name value. Corrupt Elf.>";
+            "<No valid Elf section strings exist>";
         int res = 0;
 
+        if (!ep->f_ehdr->ge_shstrndx || !stringsecbase) {
+            gshdr->gh_namestring = namestr;
+            continue;
+        }
+        namestr = "<Invalid sh_name value. Corrupt Elf.>";
         res = validate_section_name_string(ep->f_elf_shstrings_length,
             gshdr->gh_name, stringsecbase,
             errcode);
         if (res != DW_DLV_OK) {
             gshdr->gh_namestring = namestr;
-            return res;
+            if (res == DW_DLV_ERROR) {
+                return res;
+            }
+            /* no entry, missing strings. */
+            *errcode = DW_DLE_NO_SECT_STRINGS;
+            return DW_DLV_ERROR;
+        } else {
+            gshdr->gh_namestring = stringsecbase + gshdr->gh_name;
         }
-        gshdr->gh_namestring = stringsecbase + gshdr->gh_name;
     }
     return DW_DLV_OK;
 }
 
+/*  The C standard ensures these are all appropriate
+    zero bits. */
+static const dw_elf32_ehdr eh32_zero;
+static const dw_elf64_ehdr eh64_zero;
 
 static int
 elf_load_elf_header32(
@@ -1546,6 +1769,7 @@ elf_load_elf_header32(
     dw_elf32_ehdr ehdr32;
     struct generic_ehdr *ehdr = 0;
 
+    ehdr32 = eh32_zero;
     res = RRMOA(ep->f_fd,&ehdr32,0,sizeof(ehdr32),
         ep->f_filesize,errcode);
     if (res != DW_DLV_OK) {
@@ -1558,6 +1782,12 @@ elf_load_elf_header32(
         return DW_DLV_ERROR;
     }
     res  = generic_ehdr_from_32(ep,ehdr,&ehdr32,errcode);
+    if (res != DW_DLV_OK) {
+        free(ehdr);
+        return res;
+    }
+    ep->f_machine = (unsigned)ehdr->ge_machine;
+    ep->f_flags = ehdr->ge_flags;
     return res;
 }
 static int
@@ -1568,6 +1798,7 @@ elf_load_elf_header64(
     dw_elf64_ehdr ehdr64;
     struct generic_ehdr *ehdr = 0;
 
+    ehdr64 = eh64_zero;
     res = RRMOA(ep->f_fd,&ehdr64,0,sizeof(ehdr64),
         ep->f_filesize,errcode);
     if (res != DW_DLV_OK) {
@@ -1580,71 +1811,13 @@ elf_load_elf_header64(
         return DW_DLV_ERROR;
     }
     res  = generic_ehdr_from_64(ep,ehdr,&ehdr64,errcode);
+    if (res != DW_DLV_OK) {
+        free(ehdr);
+        return res;
+    }
+    ep->f_machine = (unsigned)ehdr->ge_machine;
+    ep->f_flags = ehdr->ge_flags;
     return res;
-}
-
-static int
-validate_struct_sizes(
-#ifdef HAVE_ELF_H
-    int*errcode
-#else
-    UNUSEDARG int*errcode
-#endif
-    )
-{
-#ifdef HAVE_ELF_H
-    /*  This is a sanity check when we have an elf.h
-        to check against. */
-    if (sizeof(Elf32_Ehdr) != sizeof(dw_elf32_ehdr)) {
-        *errcode = DW_DLE_BAD_TYPE_SIZE;
-        return DW_DLV_ERROR;
-    }
-    if (sizeof(Elf64_Ehdr) != sizeof(dw_elf64_ehdr)) {
-        *errcode = DW_DLE_BAD_TYPE_SIZE;
-        return DW_DLV_ERROR;
-    }
-    if (sizeof(Elf32_Shdr) != sizeof(dw_elf32_shdr)) {
-        *errcode = DW_DLE_BAD_TYPE_SIZE;
-        return DW_DLV_ERROR;
-    }
-    if (sizeof(Elf64_Shdr) != sizeof(dw_elf64_shdr)) {
-        *errcode = DW_DLE_BAD_TYPE_SIZE;
-        return DW_DLV_ERROR;
-    }
-    if (sizeof(Elf32_Phdr) != sizeof(dw_elf32_phdr)) {
-        *errcode = DW_DLE_BAD_TYPE_SIZE;
-        return DW_DLV_ERROR;
-    }
-    if (sizeof(Elf64_Phdr) != sizeof(dw_elf64_phdr)) {
-        *errcode = DW_DLE_BAD_TYPE_SIZE;
-        return DW_DLV_ERROR;
-    }
-    if (sizeof(Elf32_Rel) != sizeof(dw_elf32_rel)) {
-        *errcode = DW_DLE_BAD_TYPE_SIZE;
-        return DW_DLV_ERROR;
-    }
-    if (sizeof(Elf64_Rel) != sizeof(dw_elf64_rel)) {
-        *errcode = DW_DLE_BAD_TYPE_SIZE;
-        return DW_DLV_ERROR;
-    }
-    if (sizeof(Elf32_Rela) != sizeof(dw_elf32_rela)) {
-        *errcode = DW_DLE_BAD_TYPE_SIZE;
-        return DW_DLV_ERROR;
-    }
-    if (sizeof(Elf64_Rela) != sizeof(dw_elf64_rela)) {
-        *errcode = DW_DLE_BAD_TYPE_SIZE;
-        return DW_DLV_ERROR;
-    }
-    if (sizeof(Elf32_Sym) != sizeof(dw_elf32_sym)) {
-        *errcode = DW_DLE_BAD_TYPE_SIZE;
-        return DW_DLV_ERROR;
-    }
-    if (sizeof(Elf64_Sym) != sizeof(dw_elf64_sym)) {
-        *errcode = DW_DLE_BAD_TYPE_SIZE;
-        return DW_DLV_ERROR;
-    }
-#endif /* HAVE_ELF_H */
-    return DW_DLV_OK;
 }
 
 int
@@ -1653,11 +1826,6 @@ _dwarf_load_elf_header(
 {
     unsigned offsetsize = ep->f_offsetsize;
     int res = 0;
-
-    res = validate_struct_sizes(errcode);
-    if (res != DW_DLV_OK) {
-        return res;
-    }
 
     if (offsetsize == 32) {
         res = elf_load_elf_header32(ep,errcode);
@@ -1698,12 +1866,11 @@ validate_links(
     return DW_DLV_OK;
 }
 
-
 static int
 string_endswith(const char *n,const char *q)
 {
-    unsigned long len = strlen(n);
-    unsigned long qlen = strlen(q);
+    size_t len = strlen(n);
+    size_t qlen = strlen(q);
     const char *startpt = 0;
 
     if ( len < qlen) {
@@ -1739,7 +1906,11 @@ elf_flagmatches(Dwarf_Unsigned flagsword,Dwarf_Unsigned flag)
     return FALSE;
 }
 
-/*  For SHT_GROUP sections. */
+/*  For SHT_GROUP sections.
+    A group section starts with a 32bit flag
+    word with value 1.
+    32bit section numbers of the sections
+    in the group follow the flag field. */
 static int
 read_gs_section_group(
     dwarf_elf_object_access_internals_t *ep,
@@ -1757,8 +1928,13 @@ read_gs_section_group(
         char dblock[4];
         Dwarf_Unsigned va = 0;
         Dwarf_Unsigned count = 0;
+        Dwarf_Unsigned groupmallocsize = 0;
         int foundone = 0;
 
+        if (seclen >= ep->f_filesize) {
+            *errcode = DW_DLE_ELF_SECTION_GROUP_ERROR;
+            return DW_DLV_ERROR;
+        }
         if (seclen < DWARF_32BIT_SIZE) {
             *errcode = DW_DLE_ELF_SECTION_GROUP_ERROR;
             return DW_DLV_ERROR;
@@ -1780,7 +1956,7 @@ read_gs_section_group(
             return DW_DLV_ERROR;
         }
         count = seclen/psh->gh_entsize;
-        if (count > ep->f_loc_shdr.g_count) {
+        if (count >= ep->f_loc_shdr.g_count) {
             /* Impossible */
             free(data);
             *errcode = DW_DLE_ELF_SECTION_GROUP_ERROR;
@@ -1792,7 +1968,15 @@ read_gs_section_group(
             free(data);
             return res;
         }
-        grouparray = malloc(count * sizeof(Dwarf_Unsigned));
+        /*  Adding 1 is silly but possibly avoids a warning
+            from a particular compiler. */
+        groupmallocsize =  (1+count) * sizeof(Dwarf_Unsigned);
+        if (groupmallocsize >= ep->f_filesize) {
+            free(data);
+            *errcode = DW_DLE_ELF_SECTION_GROUP_ERROR;
+            return DW_DLV_ERROR;
+        }
+        grouparray = malloc(groupmallocsize);
         if (!grouparray) {
             free(data);
             *errcode = DW_DLE_ALLOC_FAIL;
@@ -1810,6 +1994,9 @@ read_gs_section_group(
             return DW_DLV_ERROR;
         }
         grouparray[0] = 1;
+        /*  A .group section will have 0 to G sections
+            listed. Ignore the initial 'version' value
+            of 1 in [0] */
         dp = dp + DWARF_32BIT_SIZE;
         for ( i = 1; i < count; ++i,dp += DWARF_32BIT_SIZE) {
             Dwarf_Unsigned gseca = 0;
@@ -1818,30 +2005,35 @@ read_gs_section_group(
 
             memcpy(dblock,dp,DWARF_32BIT_SIZE);
             ASNAR(memcpy,gseca,dblock);
+            /*  Loading gseca and gsecb with different endianness.
+                Only one of them can be of any use. */
             ASNAR(_dwarf_memcpy_swap_bytes,gsecb,dblock);
             if (!gseca) {
+                /*  zero! Oops. No point in looking at gsecb */
                 free(data);
                 free(grouparray);
                 *errcode = DW_DLE_ELF_SECTION_GROUP_ERROR;
                 return DW_DLV_ERROR;
             }
-            grouparray[i] = gseca;
-            if (gseca > ep->f_loc_shdr.g_count) {
+            if (gseca >= ep->f_loc_shdr.g_count) {
                 /*  Might be confused endianness by
                     the compiler generating the SHT_GROUP.
                     This is pretty horrible. */
-
-                if (gsecb > ep->f_loc_shdr.g_count) {
+                if (gsecb >= ep->f_loc_shdr.g_count) {
                     *errcode = DW_DLE_ELF_SECTION_GROUP_ERROR;
                     free(data);
                     free(grouparray);
                     return DW_DLV_ERROR;
                 }
-                /* Ok. Yes, ugly. */
+                /*  Looks as though gsecb is the correct
+                    interpretation.  Yes, ugly. */
                 gseca = gsecb;
-                grouparray[i] = gseca;
             }
+            grouparray[i] = gseca;
             targpsh = ep->f_shdr + gseca;
+            if (_dwarf_ignorethissection(targpsh->gh_namestring)){
+                continue;
+            }
             if (targpsh->gh_section_group_number) {
                 /* multi-assignment to groups. Oops. */
                 free(data);
@@ -1877,7 +2069,6 @@ read_gs_section_group(
         Check the relocations of all SHF_GROUP section
         FIXME: algorithm needed.
 
-
     If SHT_GROUP and SHF_GROUP this is GNU groups.
     If no SHT_GROUP and have SHF_GROUP this is
     arm cc groups and we must use relocation information
@@ -1902,6 +2093,7 @@ _dwarf_elf_setup_all_section_groups(
     /* Does step A and step B */
     for (i = 0; i < count; ++psh,++i) {
         const char *name = psh->gh_namestring;
+
         if (is_empty_section(psh->gh_type)) {
             /*  No data here. */
             continue;
@@ -1946,6 +2138,7 @@ _dwarf_elf_setup_all_section_groups(
             psh->gh_section_group_number = DW_GROUPNUMBER_DWO;
             ep->f_dwo_group_section_count++;
         } else if (_dwarf_load_elf_section_is_dwarf(name,
+            psh->gh_type,
             &is_rela,&is_rel)) {
             if (!psh->gh_section_group_number) {
                 psh->gh_section_group_number = DW_GROUPNUMBER_BASE;
@@ -2000,14 +2193,6 @@ _dwarf_elf_find_sym_sections(
             ep->f_loc_dynamic.g_offset = psh->gh_offset;
         }
     }
-
-#if 0
-    res = validate_links(ep,ep->f_dynsym_sect_index,
-        ep->f_dynsym_sect_strings_sect_index,errcode);
-    if (res!= DW_DLV_OK) {
-        return res;
-    }
-#endif /* 0 */
     res = validate_links(ep,ep->f_symtab_sect_index,
         ep->f_symtab_sect_strings_sect_index,errcode);
     if (res!= DW_DLV_OK) {
@@ -2015,7 +2200,6 @@ _dwarf_elf_find_sym_sections(
     }
     return DW_DLV_OK;
 }
-
 
 int
 _dwarf_load_elf_sectheaders(

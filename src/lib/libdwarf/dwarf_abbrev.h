@@ -1,6 +1,6 @@
 /*
    Copyright (C) 2000 Silicon Graphics, Inc.  All Rights Reserved.
-   Portions Copyright (C) 2008-2019  David Anderson. All Rights Reserved.
+   Portions Copyright (C) 2008-2023  David Anderson. All Rights Reserved.
 
    This program is free software; you can redistribute it
    and/or modify it under the terms of version 2.1 of the
@@ -27,8 +27,12 @@
 
 */
 
+#ifndef DWARF_ABBREV_H
+#define DWARF_ABBREV_H
 
-
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
 
 /*  In a given CU, one of these is (eventually) set up
     for every abbreviation we need to find (and for all
@@ -53,6 +57,8 @@ struct Dwarf_Abbrev_s {
     Dwarf_Off    dab_goffset;
     /* dab_count is the number of attr/form uleb pairs */
     Dwarf_Off    dab_count;
+    /* The number of DW_FORM_implicit_const in the uleb pairs*/
+    Dwarf_Unsigned dab_implicit_count;
 
     /*  When the caller cycles through attr/form pairs
         by index from zero this lets the code read just one
@@ -65,5 +71,12 @@ int _dwarf_count_abbrev_entries(Dwarf_Debug dbg,
     Dwarf_Byte_Ptr abbrev_ptr,
     Dwarf_Byte_Ptr abbrev_section_end,
     Dwarf_Unsigned *abbrev_count_out,
+    Dwarf_Unsigned *abbrev_implicit_const_count_out,
     Dwarf_Byte_Ptr *abbrev_ptr_out,
     Dwarf_Error *error);
+
+#ifdef __cplusplus
+}
+#endif /* __cplusplus */
+
+#endif /* DWARF_ABBREV_H */

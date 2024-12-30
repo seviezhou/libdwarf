@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2020, David Anderson All rights reserved.
+Copyright (c) 2020-2021, David Anderson All rights reserved.
 
 Redistribution and use in source and binary forms, with
 or without modification, are permitted provided that the
@@ -29,51 +29,22 @@ OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-
 /*  This file reads the parts of a Windows PE
     file appropriate to reading DWARF debugging data.
 */
 
-#ifdef _WIN32
-#define _CRT_SECURE_NO_WARNINGS
-#endif /* _WIN32 */
+#include <config.h>
+#include <stddef.h> /* size_t */
+#include <stdlib.h> /* atoi() calloc() free() malloc() */
+#include <string.h> /* memset() strdup() strlen() */
 
-#include "config.h"
-#include <stdio.h>
-#ifdef HAVE_MALLOC_H
-/* Useful include for some Windows compilers. */
-#include <malloc.h>
-#endif /* HAVE_MALLOC_H */
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif /* HAVE_STDLIB_H */
-#ifdef HAVE_STRING_H
-#include <string.h> /* memcpy */
-#endif /* HAVE_STRING_H */
-#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h> /* open(), off_t, size_t, ssize_t */
-#endif /* HAVE_SYS_TYPES_H */
-#ifdef HAVE_SYS_STAT_H
-#include <sys/stat.h> /* open() */
-#endif /* HAVE_SYS_STAT_H */
-#include <fcntl.h> /* open() */
-#include <time.h>
-#ifdef HAVE_UNISTD_H
-#include <unistd.h> /* lseek read close */
-#elif defined(_WIN32) && defined(_MSC_VER)
-#include <io.h>
-#endif /* HAVE_UNISTD_H */
-
-/* Windows specific header files */
-#if defined(_WIN32) && defined(HAVE_STDAFX_H)
-#include "stdafx.h"
-#endif /* HAVE_STDAFX_H */
-
+#include "dwarf.h"
 #include "libdwarf.h"
 #include "libdwarf_private.h"
 #include "dwarf_base_types.h"
+#include "dwarf_safe_strcpy.h"
 #include "dwarf_opaque.h"
-#include "memcpy_swap.h"
+#include "dwarf_memcpy_swap.h"
 #include "dwarf_error.h" /* for _dwarf_error() declaration */
 #include "dwarf_reading.h"
 #include "dwarf_object_read_common.h"
@@ -81,23 +52,9 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "dwarf_pe_descr.h"
 #include "dwarf_peread.h"
 
-#ifdef HAVE_UNUSED_ATTRIBUTE
-#define  UNUSEDARG __attribute__ ((unused))
-#else
-#define  UNUSEDARG
-#endif
-
 #define DOS_HEADER_LEN 64
 
-#ifndef TYP
-#define TYP(n,l) char n[l]
-#endif /* TYP */
-
-
-#ifndef SIZEOFT32
-#define SIZEOFT32 4
-#endif /* SIZEOFT32 */
-#if 0
+#if 0 /* for debugging. */
 static void
 dump_bytes(char * msg,Dwarf_Small * start, long len)
 {
@@ -110,8 +67,7 @@ dump_bytes(char * msg,Dwarf_Small * start, long len)
     }
     printf("\n");
 }
-#endif
-
+#endif /*0*/
 
 static int _dwarf_pe_object_access_init(
     int  fd,
@@ -119,8 +75,7 @@ static int _dwarf_pe_object_access_init(
     unsigned endian,
     unsigned offsetsize,
     size_t filesize,
-    Dwarf_Unsigned access,
-    Dwarf_Obj_Access_Interface **binary_interface,
+    Dwarf_Obj_Access_Interface_a **binary_interface,
     int *localerrnum);
 
 static unsigned long
@@ -150,26 +105,14 @@ check_valid_string(char *tab,
     return DW_DLV_ERROR;
 }
 
-#ifdef WORDS_BIGENDIAN
-#define ASNAR(func,t,s)                         \
-    do {                                        \
-        unsigned tbyte = sizeof(t) - sizeof(s); \
-        t = 0;                                  \
-        func(((char *)&t)+tbyte ,&s[0],sizeof(s));  \
-    } while (0)
-#else /* LITTLE ENDIAN */
-#define ASNAR(func,t,s)                         \
-    do {                                        \
-        t = 0;                                  \
-        func(&t,&s[0],sizeof(s));               \
-    } while (0)
-#endif /* end LITTLE- BIG-ENDIAN */
-
 /*  Name_array is 8 byte string, or it is supposed to be
     anyway.  */
 static int
 pe_section_name_get(dwarf_pe_object_access_internals_t *pep,
     const char *name_array,
+
+    /* The name strlen */
+    unsigned long size_name,
     const char ** name_out,
     int *errcode)
 {
@@ -180,8 +123,10 @@ pe_section_name_get(dwarf_pe_object_access_internals_t *pep,
         char temp_array[9];
         int res = 0;
 
-        memcpy(temp_array,name_array+1,7);
-        temp_array[7] = 0;
+        /*  The value is an integer after the /,
+            and we want the value */
+        _dwarf_safe_strcpy(temp_array,sizeof(temp_array),
+            name_array+1,size_name-1);
         v = atoi(temp_array);
         if (v < 0) {
             *errcode = DW_DLE_STRING_OFFSET_BAD;
@@ -202,7 +147,6 @@ pe_section_name_get(dwarf_pe_object_access_internals_t *pep,
             *errcode = DW_DLE_STRING_OFFSET_BAD;
             return DW_DLV_ERROR;
         }
-
         s = pep->pe_string_table +u;
         *name_out = s;
         return DW_DLV_OK;
@@ -211,15 +155,13 @@ pe_section_name_get(dwarf_pe_object_access_internals_t *pep,
     return DW_DLV_OK;
 }
 
-
-static Dwarf_Endianness
+static Dwarf_Small
 pe_get_byte_order (void *obj)
 {
     dwarf_pe_object_access_internals_t *pep =
         (dwarf_pe_object_access_internals_t*)(obj);
     return pep->pe_endian;
 }
-
 
 static Dwarf_Small
 pe_get_length_size (void *obj)
@@ -229,6 +171,14 @@ pe_get_length_size (void *obj)
     return pep->pe_offsetsize/8;
 }
 
+static Dwarf_Unsigned
+pe_get_file_size (void *obj)
+{
+    dwarf_pe_object_access_internals_t *pep =
+        (dwarf_pe_object_access_internals_t*)(obj);
+    return pep->pe_filesize;
+}
+
 static Dwarf_Small
 pe_get_pointer_size (void *obj)
 {
@@ -236,7 +186,6 @@ pe_get_pointer_size (void *obj)
         (dwarf_pe_object_access_internals_t*)(obj);
     return pep->pe_pointersize/8;
 }
-
 
 static Dwarf_Unsigned
 pe_get_section_count (void *obj)
@@ -248,33 +197,35 @@ pe_get_section_count (void *obj)
 
 static int
 pe_get_section_info (void *obj,
-    Dwarf_Half section_index,
-    Dwarf_Obj_Access_Section *return_section,
-    UNUSEDARG int *error)
+    Dwarf_Unsigned section_index,
+    Dwarf_Obj_Access_Section_a *return_section,
+    int *error)
 {
     dwarf_pe_object_access_internals_t *pep =
         (dwarf_pe_object_access_internals_t*)(obj);
 
-
+    (void)error;
     if (section_index < pep->pe_section_count) {
         struct dwarf_pe_generic_image_section_header *sp = 0;
         sp = pep->pe_sectionptr + section_index;
-        return_section->addr = pep->pe_OptionalHeader.ImageBase +
+        return_section->as_name = sp->dwarfsectname;
+        return_section->as_type = 0;
+        return_section->as_flags = sp->Characteristics;
+        return_section->as_addr = pep->pe_OptionalHeader.ImageBase +
             sp->VirtualAddress;
-        return_section->type = 0;
+        return_section->as_offset = sp->PointerToRawData;
         /*  SizeOfRawData can be rounded or truncated,
             use VirtualSize for the real analog of Elf
             section size. */
-        return_section->size = sp->VirtualSize;
-        return_section->name = sp->dwarfsectname;
-        return_section->link = 0;
-        return_section->info = 0;
-        return_section->entrysize = 0;
+        return_section->as_size = sp->VirtualSize;
+        return_section->as_link = 0;
+        return_section->as_info = 0;
+        return_section->as_addralign = 0;
+        return_section->as_entrysize = 0;
         return DW_DLV_OK;
     }
     return DW_DLV_NO_ENTRY;
 }
-
 
 static int
 load_optional_header32(dwarf_pe_object_access_internals_t *pep,
@@ -293,8 +244,8 @@ load_optional_header32(dwarf_pe_object_access_internals_t *pep,
 
     res =  _dwarf_object_read_random(pep->pe_fd,
         (char *)&hdr,
-        (off_t)offset, sizeof(IMAGE_OPTIONAL_HEADER32_dw),
-        (off_t)pep->pe_filesize,
+        offset, sizeof(IMAGE_OPTIONAL_HEADER32_dw),
+        pep->pe_filesize,
         errcode);
     if (res != DW_DLV_OK) {
         return res;
@@ -332,8 +283,8 @@ load_optional_header64(dwarf_pe_object_access_internals_t *pep,
     }
     res =  _dwarf_object_read_random(pep->pe_fd,
         (char *)&hdr,
-        (off_t)offset, sizeof(IMAGE_OPTIONAL_HEADER64_dw),
-        (off_t)pep->pe_filesize,
+        offset, sizeof(IMAGE_OPTIONAL_HEADER64_dw),
+        pep->pe_filesize,
         errcode);
     if (res != DW_DLV_OK) {
         return res;
@@ -357,8 +308,51 @@ load_optional_header64(dwarf_pe_object_access_internals_t *pep,
     return DW_DLV_OK;
 }
 
+static char *boringname[] = {
+".text",
+".bss",
+".data",
+".rdata",
+0
+};
+
 static int
-pe_load_section (void *obj, Dwarf_Half section_index,
+in_name_list(char * name)
+{
+    int i = 0;
+
+    if (!name) {
+        return FALSE;
+    }
+    for ( ; ; ++i) {
+        if (!boringname[i]) {
+            break;
+        }
+        if (!strcmp(name,boringname[i])) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static int
+is_irrelevant_section(char * name,
+    Dwarf_Unsigned virtsz)
+{
+    int res = FALSE;
+
+    res = in_name_list(name);
+    if (res) {
+        return TRUE;
+    }
+    if (!virtsz) {
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static int
+pe_load_section (void *obj, Dwarf_Unsigned section_index,
     Dwarf_Small **return_data, int *error)
 {
     dwarf_pe_object_access_internals_t *pep =
@@ -375,8 +369,15 @@ pe_load_section (void *obj, Dwarf_Half section_index,
             *return_data = sp->loaded_data;
             return DW_DLV_OK;
         }
+        if (sp->section_irrelevant_to_dwarf) {
+            return DW_DLV_NO_ENTRY;
+        }
         if (!sp->VirtualSize) {
             return DW_DLV_NO_ENTRY;
+        }
+        if (sp->SizeOfRawData >= pep->pe_filesize) {
+            *error = DW_DLE_PE_SECTION_SIZE_ERROR;
+            return DW_DLV_ERROR;
         }
         read_length = sp->SizeOfRawData;
         if (sp->VirtualSize < read_length) {
@@ -399,8 +400,8 @@ pe_load_section (void *obj, Dwarf_Half section_index,
         }
         res = _dwarf_object_read_random(pep->pe_fd,
             (char *)sp->loaded_data,
-            (off_t)sp->PointerToRawData, (size_t)read_length,
-            (off_t)pep->pe_filesize,
+            sp->PointerToRawData, (size_t)read_length,
+            pep->pe_filesize,
             error);
         if (res != DW_DLV_OK) {
             free(sp->loaded_data);
@@ -421,7 +422,7 @@ pe_load_section (void *obj, Dwarf_Half section_index,
 
 void
 _dwarf_destruct_pe_access(
-    struct Dwarf_Obj_Access_Interface_s *aip)
+    struct Dwarf_Obj_Access_Interface_a_s *aip)
 {
     dwarf_pe_object_access_internals_t *pep = 0;
     Dwarf_Unsigned i = 0;
@@ -429,9 +430,9 @@ _dwarf_destruct_pe_access(
     if (!aip) {
         return;
     }
-    pep = (dwarf_pe_object_access_internals_t*)(aip->object);
+    pep = (dwarf_pe_object_access_internals_t*)(aip->ai_object);
     if (pep->pe_destruct_close_fd && pep->pe_fd !=-1) {
-        close(pep->pe_fd);
+        _dwarf_closer(pep->pe_fd);
         pep->pe_fd = -1;
     }
     free((char *)pep->pe_path);
@@ -460,9 +461,8 @@ _dwarf_destruct_pe_access(
     return;
 }
 
-
 static int
-dwarf_pe_load_dwarf_section_headers(
+_dwarf_pe_load_dwarf_section_headers(
     dwarf_pe_object_access_internals_t *pep,int *errcode)
 {
     Dwarf_Unsigned i = 0;
@@ -506,11 +506,12 @@ dwarf_pe_load_dwarf_section_headers(
         IMAGE_SECTION_HEADER_dw filesect;
         char        safe_name[IMAGE_SIZEOF_SHORT_NAME +1];
         const char *expname = 0;
+        int irrelevant = 0;
 
         res =  _dwarf_object_read_random(pep->pe_fd,
-            (char *)&filesect,(off_t)cur_offset,
+            (char *)&filesect,cur_offset,
             sizeof(filesect),
-            (off_t)pep->pe_filesize,
+            pep->pe_filesize,
             errcode);
         if (res != DW_DLV_OK) {
             return res;
@@ -518,13 +519,15 @@ dwarf_pe_load_dwarf_section_headers(
         /*  The following is safe. filesect.Name is
             IMAGE_SIZEOF_SHORT_NAME bytes long and may
             not (not sure) have a NUL terminator. */
-        strncpy(safe_name,filesect.Name,IMAGE_SIZEOF_SHORT_NAME);
-        /*  Then add NUL terminator. */
-        safe_name[IMAGE_SIZEOF_SHORT_NAME] = 0;
+        _dwarf_safe_strcpy(safe_name,
+            sizeof(safe_name),
+            filesect.Name,
+            IMAGE_SIZEOF_SHORT_NAME);
+        /* Have NUL terminator now. */
         sec_outp->name = strdup(safe_name);
-
         res = pe_section_name_get(pep,
-            safe_name,&expname,errcode);
+            safe_name,(unsigned int)strlen(safe_name),
+            &expname,errcode);
         if (res != DW_DLV_OK) {
             return res;
         }
@@ -544,6 +547,41 @@ dwarf_pe_load_dwarf_section_headers(
             filesect.VirtualAddress);
         ASNAR(pep->pe_copy_word,sec_outp->SizeOfRawData,
             filesect.SizeOfRawData);
+        irrelevant = is_irrelevant_section(sec_outp->dwarfsectname,
+            sec_outp->VirtualSize);
+        sec_outp->section_irrelevant_to_dwarf = irrelevant;
+        if (irrelevant) {
+            continue;
+        }
+        {
+            /*  A Heuristic, allowing large virtual size
+                but not unlimited as we will malloc it
+                later, as Virtualsize. */
+            Dwarf_Unsigned limit = 100*pep->pe_filesize;
+            if (limit < pep->pe_filesize) {
+                /* An overflow. Bad. */
+                *errcode = DW_DLE_PE_SECTION_SIZE_HEURISTIC_FAIL;
+                return DW_DLV_ERROR;
+            }
+            if (sec_outp->VirtualSize >
+                ((Dwarf_Unsigned)2000*
+                (Dwarf_Unsigned)1000*
+                (Dwarf_Unsigned)1000) &&
+                (sec_outp->VirtualSize > pep->pe_filesize)) {
+                /*  Likely unreasonable.
+                    the hard limit written this way
+                    simply for clarity.
+                    Hard to know what to set it to. */
+                *errcode = DW_DLE_PE_SECTION_SIZE_HEURISTIC_FAIL;
+                return DW_DLV_ERROR;
+            }
+            if (sec_outp->VirtualSize > limit &&
+                0 == pep->pe_is_64bit ) {
+                /* Likely totally unreasonable. Bad. */
+                *errcode = DW_DLE_PE_SECTION_SIZE_HEURISTIC_FAIL;
+                return DW_DLV_ERROR;
+            }
+        }
         ASNAR(pep->pe_copy_word,sec_outp->PointerToRawData,
             filesect.PointerToRawData);
         if (sec_outp->SizeOfRawData > pep->pe_filesize ||
@@ -568,9 +606,8 @@ dwarf_pe_load_dwarf_section_headers(
     return DW_DLV_OK;
 }
 
-
 static int
-dwarf_load_pe_sections(
+_dwarf_load_pe_sections(
     dwarf_pe_object_access_internals_t *pep,int *errcode)
 {
     struct dos_header_dw dhinmem;
@@ -589,7 +626,7 @@ dwarf_load_pe_sections(
         return DW_DLV_ERROR;
     }
     res = _dwarf_object_read_random(pep->pe_fd,(char *)&dhinmem,
-        0, sizeof(dhinmem),(off_t)pep->pe_filesize, errcode);
+        0, sizeof(dhinmem),pep->pe_filesize, errcode);
     if (res != DW_DLV_OK) {
         return res;
     }
@@ -605,7 +642,7 @@ dwarf_load_pe_sections(
 #else  /* LITTLE ENDIAN */
         word_swap = _dwarf_memcpy_swap_bytes;
 #endif /* LITTLE- BIG-ENDIAN */
-        locendian = DW_OBJECT_MSB;
+        locendian = DW_END_big;
     } else if (dos_sig == IMAGE_DOS_REVSIGNATURE_dw) {
         /* raw load, so  intrepet a match the other way. */
         /* LITTLE ENDIAN */
@@ -614,7 +651,7 @@ dwarf_load_pe_sections(
 #else  /* LITTLE ENDIAN */
         word_swap = _dwarf_memcpy_noswap_bytes;
 #endif /* LITTLE- BIG-ENDIAN */
-        locendian = DW_OBJECT_LSB;
+        locendian = DW_END_little;
     } else {
         /* Not dos header not a PE file we recognize */
         *errcode = DW_DLE_FILE_WRONG_TYPE;
@@ -637,8 +674,8 @@ dwarf_load_pe_sections(
 
     res =  _dwarf_object_read_random(pep->pe_fd,
         (char *)&nt_sig_array[0],
-        (off_t)nt_address, sizeof(nt_sig_array),
-        (off_t)pep->pe_filesize,errcode);
+        nt_address, sizeof(nt_sig_array),
+        pep->pe_filesize,errcode);
     if (res != DW_DLV_OK) {
         return res;
     }
@@ -660,8 +697,8 @@ dwarf_load_pe_sections(
         return DW_DLV_ERROR;
     }
     res = _dwarf_object_read_random(pep->pe_fd,(char *)&ifh,
-        (off_t)pep->pe_nt_header_offset, sizeof(ifh),
-        (off_t)pep->pe_filesize,errcode);
+        pep->pe_nt_header_offset, sizeof(ifh),
+        pep->pe_filesize,errcode);
     if (res != DW_DLV_OK) {
         return res;
     }
@@ -678,7 +715,8 @@ dwarf_load_pe_sections(
         ifh.SizeOfOptionalHeader);
     ASNAR(word_swap,pep->pe_FileHeader.Characteristics,
         ifh.Characteristics);
-
+    pep->pe_machine = pep->pe_FileHeader.Machine;
+    pep->pe_flags = pep->pe_FileHeader.Characteristics;
     pep->pe_optional_header_offset = pep->pe_nt_header_offset+
         sizeof(ifh);
     if (pep->pe_offsetsize == 32) {
@@ -733,9 +771,9 @@ dwarf_load_pe_sections(
         }
         memset(size_field,0,sizeof(size_field));
         res =  _dwarf_object_read_random(pep->pe_fd,
-            (char *)size_field, (off_t)pep->pe_string_table_offset,
+            (char *)size_field, pep->pe_string_table_offset,
             sizeof(size_field),
-            (off_t)pep->pe_filesize,errcode);
+            pep->pe_filesize,errcode);
         if (res != DW_DLV_OK) {
             return res;
         }
@@ -750,24 +788,32 @@ dwarf_load_pe_sections(
             *errcode = DW_DLE_FILE_TOO_SMALL;
             return DW_DLV_ERROR;
         }
+        /*  size+1 to ensure there is a terminating null character
+            in memory so CoverityScan knows there is always a
+            final null.  CoverityScan is not aware
+            there may be multiple strings in the table.
+            If there is a compiler bug the final string
+            might be missing its intended null terminator! */
         pep->pe_string_table =
-            (char *)malloc((size_t)pep->pe_string_table_size);
+            (char *)calloc(1,(size_t)pep->pe_string_table_size+1);
         if (!pep->pe_string_table) {
             *errcode = DW_DLE_ALLOC_FAIL;
             return DW_DLV_ERROR;
         }
         res = _dwarf_object_read_random(pep->pe_fd,
             (char *)pep->pe_string_table,
-            (off_t)pep->pe_string_table_offset,
+            pep->pe_string_table_offset,
             (size_t)pep->pe_string_table_size,
-            (off_t)pep->pe_filesize,errcode);
+            pep->pe_filesize,errcode);
         if (res != DW_DLV_OK) {
             free(pep->pe_string_table);
             pep->pe_string_table = 0;
             return res;
         }
+        /*  Should pass coverity now. */
+        pep->pe_string_table[pep->pe_string_table_size] = 0;
     }
-    res = dwarf_pe_load_dwarf_section_headers(pep,errcode);
+    res = _dwarf_pe_load_dwarf_section_headers(pep,errcode);
     return res;
 }
 
@@ -778,20 +824,19 @@ _dwarf_pe_setup(int fd,
     unsigned endian,
     unsigned offsetsize,
     size_t filesize,
-    Dwarf_Unsigned access,
     unsigned groupnumber,
     Dwarf_Handler errhand,
     Dwarf_Ptr errarg,
     Dwarf_Debug *dbg,Dwarf_Error *error)
 {
-    Dwarf_Obj_Access_Interface *binary_interface = 0;
+    Dwarf_Obj_Access_Interface_a *binary_interface = 0;
     dwarf_pe_object_access_internals_t *pep = 0;
     int res = DW_DLV_OK;
     int localerrnum = 0;
 
     res = _dwarf_pe_object_access_init(
         fd,
-        ftype,endian,offsetsize,filesize,access,
+        ftype,endian,offsetsize,filesize,
         &binary_interface,
         &localerrnum);
     if (res != DW_DLV_OK) {
@@ -809,16 +854,19 @@ _dwarf_pe_setup(int fd,
         _dwarf_destruct_pe_access(binary_interface);
         return res;
     }
-    pep = binary_interface->object;
+    pep = binary_interface->ai_object;
+    (*dbg)->de_obj_flags = pep->pe_flags;
+    (*dbg)->de_obj_machine = pep->pe_machine;
     pep->pe_path = strdup(true_path);
     return res;
 }
 
-static Dwarf_Obj_Access_Methods pe_methods = {
+static Dwarf_Obj_Access_Methods_a pe_methods = {
     pe_get_section_info,
     pe_get_byte_order,
     pe_get_length_size,
     pe_get_pointer_size,
+    pe_get_file_size,
     pe_get_section_count,
     pe_load_section,
     0 /* ignore pe relocations. */
@@ -833,23 +881,22 @@ _dwarf_pe_object_access_internals_init(
     unsigned endian,
     unsigned offsetsize,
     size_t filesize,
-    UNUSEDARG Dwarf_Unsigned access,
     int *errcode)
 {
     dwarf_pe_object_access_internals_t * intfc = internals;
-    struct Dwarf_Obj_Access_Interface_s *localdoas = 0;
+    struct Dwarf_Obj_Access_Interface_a_s *localdoas = 0;
     int res = 0;
 
     /*  Must malloc as _dwarf_destruct_pe_access()
         forces that due to other uses. */
-    localdoas = (struct Dwarf_Obj_Access_Interface_s *)
-        malloc(sizeof(struct Dwarf_Obj_Access_Interface_s));
+    localdoas = (struct Dwarf_Obj_Access_Interface_a_s *)
+        malloc(sizeof(struct Dwarf_Obj_Access_Interface_a_s));
     if (!localdoas) {
         free(internals);
         *errcode = DW_DLE_ALLOC_FAIL;
         return DW_DLV_ERROR;
     }
-    memset(localdoas,0,sizeof(struct Dwarf_Obj_Access_Interface_s));
+    memset(localdoas,0,sizeof(struct Dwarf_Obj_Access_Interface_a_s));
     intfc->pe_ident[0]    = 'P';
     intfc->pe_ident[1]    = '1';
     intfc->pe_fd          = fd;
@@ -861,26 +908,26 @@ _dwarf_pe_object_access_internals_init(
     /* pe_path set by caller */
 
 #ifdef WORDS_BIGENDIAN
-    if (endian == DW_ENDIAN_LITTLE ) {
+    if (endian == DW_END_little) {
         intfc->pe_copy_word = _dwarf_memcpy_swap_bytes;
-        intfc->pe_endian = DW_OBJECT_LSB;
+        intfc->pe_endian = DW_END_little;
     } else {
         intfc->pe_copy_word = _dwarf_memcpy_noswap_bytes;
-        intfc->pe_endian = DW_OBJECT_MSB;
+        intfc->pe_endian = DW_END_big;
     }
 #else  /* LITTLE ENDIAN */
-    if (endian == DW_ENDIAN_LITTLE ) {
+    if (endian == DW_END_little) {
         intfc->pe_copy_word = _dwarf_memcpy_noswap_bytes;
-        intfc->pe_endian = DW_OBJECT_LSB;
+        intfc->pe_endian = DW_END_little;
     } else {
         intfc->pe_copy_word = _dwarf_memcpy_swap_bytes;
-        intfc->pe_endian = DW_OBJECT_MSB;
+        intfc->pe_endian = DW_END_big;
     }
 #endif /* LITTLE- BIG-ENDIAN */
-    res = dwarf_load_pe_sections(intfc,errcode);
+    res = _dwarf_load_pe_sections(intfc,errcode);
     if (res != DW_DLV_OK) {
-        localdoas->object = intfc;
-        localdoas->methods = 0;
+        localdoas->ai_object = intfc;
+        localdoas->ai_methods = 0;
         _dwarf_destruct_pe_access(localdoas);
         localdoas = 0;
         return res;
@@ -890,7 +937,6 @@ _dwarf_pe_object_access_internals_init(
     return DW_DLV_OK;
 }
 
-
 static int
 _dwarf_pe_object_access_init(
     int  fd,
@@ -898,14 +944,13 @@ _dwarf_pe_object_access_init(
     unsigned endian,
     unsigned offsetsize,
     size_t filesize,
-    Dwarf_Unsigned access,
-    Dwarf_Obj_Access_Interface **binary_interface,
+    Dwarf_Obj_Access_Interface_a **binary_interface,
     int *localerrnum)
 {
 
     int res = 0;
     dwarf_pe_object_access_internals_t *internals = 0;
-    Dwarf_Obj_Access_Interface *intfc = 0;
+    Dwarf_Obj_Access_Interface_a *intfc = 0;
 
     internals = malloc(sizeof(dwarf_pe_object_access_internals_t));
     if (!internals) {
@@ -917,14 +962,13 @@ _dwarf_pe_object_access_init(
     res = _dwarf_pe_object_access_internals_init(internals,
         fd,
         ftype, endian, offsetsize, filesize,
-        access,
         localerrnum);
     if (res != DW_DLV_OK){
         /* *err is already set. and the call freed internals */
         return DW_DLV_ERROR;
     }
 
-    intfc = malloc(sizeof(Dwarf_Obj_Access_Interface));
+    intfc = malloc(sizeof(Dwarf_Obj_Access_Interface_a));
     if (!intfc) {
         /* Impossible case, we hope. Give up. */
         free(internals);
@@ -932,8 +976,8 @@ _dwarf_pe_object_access_init(
         return DW_DLV_ERROR;
     }
     /* Initialize the interface struct */
-    intfc->object = internals;
-    intfc->methods = &pe_methods;
+    intfc->ai_object = internals;
+    intfc->ai_methods = &pe_methods;
     *binary_interface = intfc;
     return DW_DLV_OK;
 }

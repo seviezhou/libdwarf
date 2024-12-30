@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, David Anderson
+/* Copyright (c) 2019-2023, David Anderson
 All rights reserved.
 
 Redistribution and use in source and binary forms, with
@@ -35,22 +35,6 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifdef __cplusplus
 extern "C" {
 #endif /* __cplusplus */
-
-/*  Use the system headers if they are available. */
-/*  Use the system headers if they are available. */
-#ifdef HAVE_ELF_H
-#include <elf.h>
-#endif /* HAVE_ELF_H */
-
-/*  Relocation definitions are in sys/elf_{mach}.h on Solaris.  */
-#ifdef HAVE_LIBELF_H
-#include <libelf.h>
-#else
-#ifdef HAVE_LIBELF_LIBELF_H
-#include <libelf/libelf.h>
-#endif /* HAVE_LIBELF_LIBELF_H */
-#endif /* HAVE_LIBELF_H */
-
 
 /* Standard Elf section types. */
 #ifndef SHT_NULL
@@ -163,7 +147,6 @@ extern "C" {
 #define PF_MASKPROC     0xf0000000
 #endif
 
-
 #ifndef ET_NONE
 #define ET_NONE          0
 #endif
@@ -194,7 +177,6 @@ extern "C" {
 #ifndef ET_HIPROC
 #define ET_HIPROC        0xffff
 #endif
-
 
 #ifndef EM_NONE
 #define EM_NONE          0
@@ -966,7 +948,6 @@ extern "C" {
 #define ELFOSABI_STANDALONE 255
 #endif
 
-
 /* for the producer code. */
 #ifndef R_MIPS_NONE
 #define R_MIPS_NONE 0
@@ -1003,6 +984,9 @@ extern "C" {
 #ifndef R_386_32
 #define R_386_32                               1
 #endif /* R_386_32 */
+#ifndef R_386_GOTOFF
+#define R_386_GOTOFF                           9
+#endif /* R_386_GOTOFF */
 #ifndef R_386_GOTPC
 #define R_386_GOTPC                            10
 #endif /* R_386_GOTPC */
@@ -1027,6 +1011,9 @@ extern "C" {
 #ifndef R_390_TLS_LDO64
 #define R_390_TLS_LDO64                        53
 #endif /* R_390_TLS_LDO64 */
+#ifndef R_AARCH64_NONE
+#define R_AARCH64_NONE                        0
+#endif /* R_AARCH64_NONE */
 #ifndef R_AARCH64_ABS32
 #define R_AARCH64_ABS32                        258
 #endif /* R_AARCH64_ABS32 */

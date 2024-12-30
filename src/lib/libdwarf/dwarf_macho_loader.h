@@ -6,7 +6,8 @@
     some original comments hard to follow.
     cctools-895  in its original form
     is available from https://opensource.apple.com/
-    see Developer Tools version 8.2.1. cctools-895/include/loader.h */
+    see Developer Tools version 8.2.1. cctools-895/include/loader.h
+    and cctools-1009.3/cctools/include/mach-o/loader.h */
 /*
 * Copyright (c) 1999-2010 Apple Inc.  All Rights Reserved.
 *
@@ -42,19 +43,20 @@
 extern "C" {
 #endif /* __cplusplus */
 
-
 #if 0 /* Not used here. DavidA. September 2018 */
+    #include changed to #xnclude so casual readers will not
+    be confused.
 /*
 * This file describes the format of mach object files.
 */
-#include <stdint.h>
+#xnclude <stdint.h>
 
 /*
 * <mach/machine.h> is needed here for
 * the cpu_type_t and cpu_subtype_t types
 * and contains the constants for the possible values of these types.
 */
-#include <mach/machine.h>
+#xnclude <mach/machine.h>
 
 /*
 * <mach/vm_prot.h> is needed here for the
@@ -62,20 +64,49 @@ extern "C" {
 * constants that are or'ed together for the
 * possible values of this type.
 */
-#include <mach/vm_prot.h>
+#xnclude <mach/vm_prot.h>
 
 /*
 * <machine/thread_status.h> is expected to define
 * the flavors of the thread
 * states and the structures of those flavors for each machine.
 */
-#include <mach/machine/thread_status.h>
-#include <architecture/byte_order.h>
+#xnclude <mach/machine/thread_status.h>
+#xnclude <architecture/byte_order.h>
 #endif /* 0 */
 
 #ifndef TYP
-#define TYP(n,l) char n[l]
+#define TYP(n,l) char (n)[(l)]
 #endif /* TYP */
+
+/*  This is Apple internal naming for Universal Binaries
+    and is not 'Inclusive Terminology" !! */
+#define FAT_MAGIC   0xcafebabe
+#define FAT_CIGAM   0xbebafeca
+#define FAT_MAGIC_64    0xcafebabf
+#define FAT_CIGAM_64    0xbfbafeca
+
+struct fat_header {
+    TYP(magic,4);    /* FAT_MAGIC or FAT_MAGIC_64 */
+    TYP(nfat_arch,4); /* number of structs that follow */
+};
+
+struct fat_arch {
+    TYP(cputype ,4);  /* cpu specifier (int) */
+    TYP(cpusubtype,4); /* machine specifier (int) */
+    TYP(offset,4);     /* file offset to this object file */
+    TYP(size,4);       /* size of this object file */
+    TYP(align,4);      /* alignment as a power of 2 */
+};
+
+struct fat_arch_64 {
+    TYP(cputype,4);    /* cpu specifier (int) */
+    TYP(cpusubtype,4); /* machine specifier (int) */
+    TYP(offset,8);     /* file offset to this object file */
+    TYP(size,8);       /* size of this object file */
+    TYP(align,4);      /* alignment as a power of 2 */
+    TYP(reserved,4);   /* reserved */
+};
 
 /*
 * The 32-bit mach header appears at the very
@@ -443,6 +474,24 @@ like environment variable */
 #define LC_VERSION_MIN_WATCHOS 0x30
 /* build for Watch min OS version */
 
+#define LC_NOTE 0x31
+/* arbitrary data included within a Mach-O file */
+
+#define LC_BUILD_VERSION 0x32
+/* build for platform min OS version */
+
+#define LC_DYLD_EXPORTS_TRIE (0x33 | LC_REQ_DYLD)
+/* used with linkedit_data_command, payload is trie */
+
+#define LC_DYLD_CHAINED_FIXUPS (0x34 | LC_REQ_DYLD)
+/* used with linkedit_data_command */
+
+#define LC_FILESET_ENTRY (0x35 | LC_REQ_DYLD)
+/* used with fileset_entry_command */
+
+#define LC_ATOM_INFO 0x36
+/* used with linkedit_data_command */
+
 /*
 * A variable length string in a load command
 * is represented by an lc_str
@@ -764,7 +813,6 @@ struct section_64 { /* for 64-bit architectures */
 #define SECTION_ATTRIBUTES_SYS     0x00ffff00
     /* system setable attributes */
 
-
 #define S_ATTR_SOME_INSTRUCTIONS 0x00000400
     /* section contains some
     machine instructions */
@@ -773,7 +821,6 @@ struct section_64 { /* for 64-bit architectures */
     relocation entries */
 #define S_ATTR_LOC_RELOC     0x00000100    /* section has local
     relocation entries */
-
 
 /*
 * The names of segments and sections in them are
@@ -801,7 +848,6 @@ struct section_64 { /* for 64-bit architectures */
                     /* the pagezero segment which has no */
                     /* protections and catches NULL */
                     /* references for MH_EXECUTE files */
-
 
 #define    SEG_TEXT    "__TEXT"  /* the tradition UNIX text segment */
 #define    SECT_TEXT    "__text"
@@ -1402,7 +1448,6 @@ struct dysymtab_command {
 #define INDIRECT_SYMBOL_LOCAL    0x80000000
 #define INDIRECT_SYMBOL_ABS    0x40000000
 
-
 /* a table of contents entry */
 struct dylib_table_of_contents {
     TYP(symbol_index,4); /* the defined external symbol
@@ -1781,7 +1826,6 @@ struct dyld_info_command {
 #define REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB            0x70
 #define REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB    0x80
 
-
 /*
 * The following are used to encode binding information
 */
@@ -1811,7 +1855,6 @@ struct dyld_info_command {
 #define BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB            0xA0
 #define BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED      0xB0
 #define BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB 0xC0
-
 
 /*
 * The following are used on the flags byte of a terminal node
@@ -1881,7 +1924,6 @@ struct fvmfile_command {
     TYP(header_addr,4); /* files virtual address */
 };
 
-
 /*
 * The entry_point_command is a replacement for thread_command.
 * It is used for main executables to specify the
@@ -1896,7 +1938,6 @@ struct entry_point_command {
     TYP(stacksize,8); /* if not zero, initial stack size */
 };
 
-
 /*
 * The source_version_command is an optional load command containing
 * the version of the sources used to build the binary.
@@ -1906,7 +1947,6 @@ struct source_version_command {
     TYP(cmdsize,4); /* 16 */
     TYP(version,8); /* A.B.C.D.E packed as a24.b10.c10.d10.e10 */
 };
-
 
 /*
 * The LC_DATA_IN_CODE load commands uses a linkedit_data_command
@@ -1923,8 +1963,6 @@ struct data_in_code_entry {
 #define DICE_KIND_JUMP_TABLE16      0x0003
 #define DICE_KIND_JUMP_TABLE32      0x0004
 #define DICE_KIND_ABS_JUMP_TABLE32  0x0005
-
-
 
 /*
 * Sections of type S_THREAD_LOCAL_VARIABLES contain an array

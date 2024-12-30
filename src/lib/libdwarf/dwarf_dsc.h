@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2016-2016 David Anderson. All Rights Reserved.
+Copyright (C) 2016-2023 David Anderson. All Rights Reserved.
 
   This program is free software; you can redistribute it
   and/or modify it under the terms of version 2.1 of the
@@ -55,6 +55,5 @@ struct Dwarf_Dsc_Head_s {
 
     struct Dwarf_Dsc_Entry_s *dsh_array;
 };
-
 
 void _dwarf_dsc_destructor(void *m);

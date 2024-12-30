@@ -27,26 +27,29 @@
 
 */
 
-#include "config.h"
-#include "dwarf_incl.h"
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h> /* for free(). */
-#endif /* HAVE_STDLIB_H */
-#ifdef HAVE_MALLOC_H
-/* Useful include for some Windows compilers. */
-#include <malloc.h>
-#endif /* HAVE_MALLOC_H */
-#include <stdio.h> /* For debugging. */
+#include <config.h>
+
+#include <stdio.h>  /* printf() */
+#include <stdlib.h> /* calloc() free() */
+#include <string.h> /* memcpy() memset() */
+
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
 #ifdef HAVE_STDINT_H
-#include <stdint.h> /* For uintptr_t */
+#include <stdint.h> /* uintptr_t */
 #endif /* HAVE_STDINT_H */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_opaque.h"
 #include "dwarf_tsearch.h"
 #include "dwarf_tied_decls.h"
 
-#define TRUE  1
-#define FALSE 0
-
-
+#ifdef DEBUG_PRIMARY_DBG /*debug dumpsignature */
 void
 _dwarf_dumpsig(const char *msg, Dwarf_Sig8 *sig,int lineno)
 {
@@ -60,6 +63,7 @@ _dwarf_dumpsig(const char *msg, Dwarf_Sig8 *sig,int lineno)
     }
     printf(" line %d\n",lineno);
 }
+#endif
 
 void *
 _dwarf_tied_make_entry(Dwarf_Sig8 *key, Dwarf_CU_Context val)
@@ -72,7 +76,6 @@ _dwarf_tied_make_entry(Dwarf_Sig8 *key, Dwarf_CU_Context val)
     }
     return e;
 }
-
 
 /*  Tied data Key is Dwarf_Sig8.
     A hash needed because we are using a hash search
@@ -100,14 +103,14 @@ _dwarf_tied_compare_function(const void *l, const void *r)
     for ( ;lcp < lcpend; ++lcp,++rcp) {
         if (*lcp < *rcp) {
             return -1;
-        } else  if (*lcp > *rcp) {
+        }
+        if (*lcp > *rcp) {
             return 1;
         }
     }
     /* match. */
     return 0;
 }
-
 
 void
 _dwarf_tied_destroy_free_node(void*nodep)
@@ -116,7 +119,6 @@ _dwarf_tied_destroy_free_node(void*nodep)
     free(enp);
     return;
 }
-
 
 /*  This presumes only we are reading the debug_info
     CUs from tieddbg. That is a reasonable
@@ -129,28 +131,17 @@ _dwarf_tied_destroy_free_node(void*nodep)
 static int
 _dwarf_loop_reading_debug_info_for_cu(
     Dwarf_Debug tieddbg,
+    struct Dwarf_Tied_Entry_s *targsig,
     Dwarf_Error *error)
 {
-    unsigned loop_count = 0;
     /*  We will not find tied signatures
         for .debug_addr (or line tables) in .debug_types.
         it seems. Those signatures point from
         'normal' to 'dwo/dwp'  (DWARF4) */
     int is_info = TRUE;
-    Dwarf_CU_Context startingcontext = 0;
     Dwarf_Unsigned next_cu_offset = 0;
 
-    startingcontext = tieddbg->de_info_reading.de_cu_context;
-
-    if (startingcontext) {
-        next_cu_offset =
-            startingcontext->cc_debug_offset +
-            startingcontext->cc_length +
-            startingcontext->cc_length_size +
-            startingcontext->cc_extension_size;
-    }
-
-    for (;;++loop_count) {
+    for (;;) {
         int sres = DW_DLV_OK;
         Dwarf_Half cu_type = 0;
         Dwarf_CU_Context latestcontext = 0;
@@ -164,10 +155,10 @@ _dwarf_loop_reading_debug_info_for_cu(
         Dwarf_Bool has_signature = FALSE;
         Dwarf_Unsigned typeoffset = 0;
 
-
         memset(&signature,0,sizeof(signature));
         sres = _dwarf_next_cu_header_internal(tieddbg,
             is_info,
+            /* no CU die wanted*/ NULL,
             &cu_header_length, &version_stamp,
             &abbrev_offset, &address_size,
             &length_size,&extension_size,
@@ -175,6 +166,9 @@ _dwarf_loop_reading_debug_info_for_cu(
             &typeoffset,
             &next_cu_offset,
             &cu_type, error);
+        if (sres == DW_DLV_ERROR) {
+            return sres;
+        }
         if (sres == DW_DLV_NO_ENTRY) {
             break;
         }
@@ -182,11 +176,16 @@ _dwarf_loop_reading_debug_info_for_cu(
         latestcontext = tieddbg->de_info_reading.de_cu_context;
 
         if (has_signature) {
-            void *retval = 0;
-            Dwarf_Sig8 consign =
-                latestcontext->cc_signature;
-            void *entry =
-                _dwarf_tied_make_entry(&consign,latestcontext);
+            void      *retval = 0;
+            Dwarf_Sig8 consign;
+            void      *entry = 0;
+
+            if (!latestcontext) {
+                /* FAILED might be out of memory.*/
+                return DW_DLV_NO_ENTRY;
+            }
+            consign = latestcontext->cc_signature;
+            entry = _dwarf_tied_make_entry(&consign,latestcontext);
             if (!entry) {
                 return DW_DLV_NO_ENTRY;
             }
@@ -203,11 +202,17 @@ _dwarf_loop_reading_debug_info_for_cu(
                     *(struct Dwarf_Tied_Data_s**) retval;
                 if (retent == entry) {
                     /*  we added a record. */
-                    return DW_DLV_OK;
+                    int res = _dwarf_tied_compare_function(
+                        targsig,entry);
+                    if (!res) {
+                        /* Found match,  stop looping */
+                        return DW_DLV_OK;
+                    }
+                    continue;
                 } else {
                     /*  found existing, no add */
                     free(entry);
-                    return DW_DLV_OK;
+                    continue;
                 }
             }
         }
@@ -217,8 +222,10 @@ _dwarf_loop_reading_debug_info_for_cu(
     return DW_DLV_OK;
 }
 
-
-/* If out of memory just return DW_DLV_NO_ENTRY.
+/*  If out of memory just return DW_DLV_NO_ENTRY.
+    This ensures all the tied CU contexts have been
+    created though the caller has most likely
+    never tried to read CUs in the tied-file.
 */
 int
 _dwarf_search_for_signature(Dwarf_Debug tieddbg,
@@ -250,14 +257,14 @@ _dwarf_search_for_signature(Dwarf_Debug tieddbg,
         *context_out = e2->dt_context;
         return DW_DLV_OK;
     }
-
     /*  We now ensure all tieddbg CUs signatures
         are in the td_tied_search,
         The caller is NOT doing
         info section read operations
         on the tieddbg in this (tied)dbg, so it
         cannot goof up their _dwarf_next_cu_header*().  */
-    res  = _dwarf_loop_reading_debug_info_for_cu(tieddbg,error);
+    res  = _dwarf_loop_reading_debug_info_for_cu(tieddbg,&entry,
+        error);
     if (res == DW_DLV_ERROR) {
         return res;
     }

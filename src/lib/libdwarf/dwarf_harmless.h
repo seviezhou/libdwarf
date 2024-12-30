@@ -1,6 +1,6 @@
 /*
 
-  Copyright (C) 2010 David Anderson.  All Rights Reserved.
+  Copyright (C) 2012-2023 David Anderson.  All Rights Reserved.
 
   This program is free software; you can redistribute it
   and/or modify it under the terms of version 2.1 of the
@@ -27,7 +27,5 @@
 
 */
 
-
-
-void dwarf_harmless_init(struct Dwarf_Harmless_s *dhp,unsigned size);
-void dwarf_harmless_cleanout(struct Dwarf_Harmless_s *dhp);
+void _dwarf_harmless_init(struct Dwarf_Harmless_s *dhp,unsigned size);
+void _dwarf_harmless_cleanout(struct Dwarf_Harmless_s *dhp);

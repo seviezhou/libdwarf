@@ -25,15 +25,23 @@
 
 */
 
-#include "globals.h"
-#include "naming.h"
-#include "esb.h"
-#include "esb_using_functions.h"
-#include "sanitized.h"
-#include "print_sections.h"
+#include <config.h>
 
-#define TRUE 1
-#define FALSE 0
+#include <string.h> /* memset() strcmp() */
+#include <stdio.h> /* FILE decl for dd_esb.h */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dd_defined_types.h"
+#include "dd_checkutil.h"
+#include "dd_glflags.h"
+#include "dd_globals.h"
+#include "dd_naming.h"
+#include "dd_esb.h"
+#include "dd_esb_using_functions.h"
+#include "dd_sanitized.h"
+#include "print_sections.h"
 
 static const char *
 dw_dlv_string(int res)
@@ -111,7 +119,7 @@ print_debugfission_index(Dwarf_Debug dbg,const char *type,
         esb_append(&tmsg," Something is corrupted.");
         simple_err_return_action(DW_DLV_ERROR,
             esb_get_string(&tmsg));
-        dwarf_xu_header_free(xuhdr);
+        dwarf_dealloc_xu_header(xuhdr);
         esb_destructor(&tmsg);
         /* We have no way to return a DW_DLV_ERROR.
             as we cannot manufacture a Dwarf_Error */
@@ -121,7 +129,7 @@ print_debugfission_index(Dwarf_Debug dbg,const char *type,
         simple_err_return_msg_either_action(res,
             "ERROR: Call to dwarf_get_xu_index_section_type() "
             "failed.");
-        dwarf_xu_header_free(xuhdr);
+        dwarf_dealloc_xu_header(xuhdr);
         return res;
     }
     if (strcmp(section_type2,type)) {
@@ -139,7 +147,7 @@ print_debugfission_index(Dwarf_Debug dbg,const char *type,
         simple_err_return_action(DW_DLV_ERROR,
             esb_get_string(&tmsg));
         esb_destructor(&tmsg);
-        dwarf_xu_header_free(xuhdr);
+        dwarf_dealloc_xu_header(xuhdr);
         /* We have no way to return a DW_DLV_ERROR.
             as we cannot manufacture a Dwarf_Error */
         return DW_DLV_OK;
@@ -177,6 +185,7 @@ print_debugfission_index(Dwarf_Debug dbg,const char *type,
             res = dwarf_get_xu_section_names(xuhdr,
                 n,&sect_num,&name,err);
             if (res == DW_DLV_ERROR) {
+                dwarf_dealloc_xu_header(xuhdr);
                 return res;
             } if (res == DW_DLV_NO_ENTRY) {
                 printf("  [%u] unused\n",n);
@@ -212,7 +221,7 @@ print_debugfission_index(Dwarf_Debug dbg,const char *type,
                     hash_slots_count);
                 simple_err_return_action(res,
                     esb_get_string(&hmsg));
-                dwarf_xu_header_free(xuhdr);
+                dwarf_dealloc_xu_header(xuhdr);
                 esb_destructor(&hmsg);
                 return res;
             } else if (res == DW_DLV_NO_ENTRY) {
@@ -226,7 +235,7 @@ print_debugfission_index(Dwarf_Debug dbg,const char *type,
                 esb_append_printf_u(&hmsg," of %u slots."
                     " That should be impossible.",
                     hash_slots_count);
-                dwarf_xu_header_free(xuhdr);
+                dwarf_dealloc_xu_header(xuhdr);
                 esb_destructor(&hmsg);
                 return res;
             } else if (!index) {
@@ -283,7 +292,7 @@ print_debugfission_index(Dwarf_Debug dbg,const char *type,
                     simple_err_return_action(res,
                         esb_get_string(&hmsg));
                     esb_destructor(&hmsg);
-                    dwarf_xu_header_free(xuhdr);
+                    dwarf_dealloc_xu_header(xuhdr);
                     return res;
                 }
                 /*  index is 1-origin. We use it
@@ -307,7 +316,7 @@ print_debugfission_index(Dwarf_Debug dbg,const char *type,
                     simple_err_return_action(res,
                         esb_get_string(&hmsg));
                     esb_destructor(&hmsg);
-                    dwarf_xu_header_free(xuhdr);
+                    dwarf_dealloc_xu_header(xuhdr);
                     return res;
                 }
                 printf("    [%1" DW_PR_DUu ",%1" DW_PR_DUu "] %20s "
@@ -322,6 +331,6 @@ print_debugfission_index(Dwarf_Debug dbg,const char *type,
             }
         }
     }
-    dwarf_xu_header_free(xuhdr);
+    dwarf_dealloc_xu_header(xuhdr);
     return DW_DLV_OK;
 }

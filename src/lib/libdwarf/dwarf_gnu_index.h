@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2020 David Anderson. All Rights Reserved.
+  Copyright (C) 2020-2023 David Anderson. All Rights Reserved.
   Redistribution and use in source and binary forms, with
   or without modification, are permitted provided that the
   following conditions are met:
@@ -86,6 +86,7 @@ struct Dwarf_Gnu_Index_Head_s {
     Dwarf_Debug      gi_dbg;
     Dwarf_Small    * gi_section_data;
     Dwarf_Unsigned   gi_section_length;
+    Dwarf_Small    * gi_section_end;
     struct Dwarf_Gnu_IBlock_s *gi_blockarray;
     Dwarf_Unsigned   gi_blockcount;
     Dwarf_Bool       gi_is_pubnames; /* if false is pubtypes */

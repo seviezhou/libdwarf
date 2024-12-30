@@ -1,7 +1,7 @@
 /*
 
 Copyright (C) 2000 Silicon Graphics, Inc.  All Rights Reserved.
-Portions Copyright (C) 2011 David Anderson. All Rights Reserved.
+Portions Copyright (C) 2011-2023 David Anderson. All Rights Reserved.
 
   This program is free software; you can redistribute it
   and/or modify it under the terms of version 2.1 of the
@@ -38,6 +38,9 @@ void _dwarf_error(Dwarf_Debug dbg, Dwarf_Error * error,
     Dwarf_Signed errval);
 void _dwarf_error_string(Dwarf_Debug dbg, Dwarf_Error * error,
     Dwarf_Signed errval, char *msg);
+
+#define DWARF_DBG_ERROR(dbg,errval,retval) \
+    _dwarf_error((dbg), error, (errval)); return(retval);
 
 #define DE_STANDARD 0 /* Normal alloc attached to dbg. */
 #define DE_STATIC 1   /* Using global static var */

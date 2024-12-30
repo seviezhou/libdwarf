@@ -72,9 +72,9 @@ def xmlize(linea, inhtml, inpre):
 
 
 def paraline(name, linea):
-    inpre = "n"
     out = ""
-    if len(linea) < 1:
+    strp = linea.strip()
+    if len(strp) < 1:
         out = "<p>" + name + ":" + "</p>"
         return out
     out = "<p>" + name + ": "
@@ -88,7 +88,7 @@ def paralines(name, lines):
     if len(lines) < 1:
         out = "<p>" + name + ":" + "</p>"
         return out
-    out = "<p>" + name + ": "
+    out = "<p>" + name + ":"
     for lin in lines:
         f, inpre = xmlize(lin, "y", inpre)
         out += f
@@ -110,6 +110,7 @@ class bugrecord:
     def __init__(self, dwid):
         self._id = dwid.strip()
         self._cve = ""
+        self._fuzzer = ""
         self._datereported = ""
         self._reportedby = ""
         self._vulnerability = []
@@ -125,7 +126,11 @@ class bugrecord:
             print("Duplicate cve ", self._cve, pubid)
             sys.exit(1)
         self._cve = pubid.strip()
-
+    def setfuzzer(self, id):
+        if self._fuzzer != "":
+            print("Duplicate fuzzer ", self._fuzzer, id)
+            sys.exit(1)
+        self._fuzzer = id.strip()
     def setdatereported(self, rep):
         if self._datereported != "":
             print("Duplicate datereported ", self._datereported, rep)
@@ -195,6 +200,7 @@ class bugrecord:
         print("")
         print("id:", self._id)
         print("cve:", self._cve)
+        print("fuzzer:", self._fuzzer)
         print("datereported:", self._datereported)
         print("reportedby:", self._reportedby)
         self.plist("vulnerability:", self._vulnerability)
@@ -205,17 +211,23 @@ class bugrecord:
         print("gitfixid:", self._gitfixid)
         print("tarrelease:", self._tarrelease)
 
-    def generate_html(self):
+    def generate_html(self,num):
         s5 = "".join(self._id)
-        t = "".join(['<h3 id="', s5, '">', self._id, "</h3>"])
+        idhead = ''.join([str(num),") ",self._id])
+        t = "".join(['<h3 id="',s5, '">',idhead, "</h3>"])
         txt = [t]
 
         inpre = "n"
         s, inp = xmlize(self._id, "y", inpre)
         t = paraline("id", s)
         txt += [t]
+
         s, inp = xmlize(self._cve, "y", inpre)
         t = paraline("cve", s)
+        txt += [t]
+
+        s, inp = xmlize(self._fuzzer, "y", inpre)
+        t = paraline("fuzzer", s)
         txt += [t]
 
         s, inp = xmlize(self._datereported, "y", inpre)
@@ -264,7 +276,7 @@ class bugrecord:
         l = main.strip()
         if len(l) > 0:
             out += l
-        out += term + "\n"
+        out += term 
         return out
 
     def paraxmlN(self, start, main, term):
@@ -276,7 +288,7 @@ class bugrecord:
             t, inpre = xmlize(l, "n", inpre)
             if len(t) > 0:
                 out += t
-        out += term + "\n"
+        out += term 
         return out
 
     def generate_xml(self):
@@ -286,10 +298,15 @@ class bugrecord:
 
         inpre = "n"
         s, inpre = xmlize(self._id, "n", inpre)
-        s = self.paraxml("<dwid>", s, "</dwid>")
+        t = self.paraxml("<dwid>", s, "</dwid>")
+        txt += [t]
 
         s, inpre = xmlize(self._cve, "n", inpre)
         t = self.paraxml("<cve>", s, "</cve>")
+        txt += [t]
+
+        s, inpre = xmlize(self._fuzzer, "n", inpre)
+        t = self.paraxml("<fuzzer>", s, "</fuzzer>")
         txt += [t]
 
         s, inpre = xmlize(self._datereported, "n", inpre)

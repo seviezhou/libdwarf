@@ -29,31 +29,34 @@ CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
 OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
 */
 
 /*  This provides access to the DWARF5 .debug_sup section. */
 
-#include "config.h"
-#include <stdio.h>
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif /* HAVE_STDLIB_H */
-#include "dwarf_incl.h"
+#include <config.h>
+
+#include <string.h> /* strlen() */
+
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_opaque.h"
 #include "dwarf_alloc.h"
 #include "dwarf_error.h"
 #include "dwarf_util.h"
 #include "dwarf_global.h"
-#include "dwarfstring.h"
-
-#define FALSE 0
-#define TRUE  1
+#include "dwarf_string.h"
 
 static void
 get_sup_fields(Dwarf_Debug dbg,
     struct Dwarf_Section_s **sec_out)
 {
-    if (!dbg) {
+    if (IS_INVALID_DBG(dbg)) {
         return;
     }
     *sec_out = &dbg->de_debug_sup;
@@ -67,6 +70,9 @@ load_sup(Dwarf_Debug dbg,
     int res;
 
     get_sup_fields(dbg,&sec);
+    if (!sec) {
+        return DW_DLV_NO_ENTRY;
+    }
     res = _dwarf_load_section(dbg,sec,error);
     return res;
 }
@@ -91,6 +97,7 @@ dwarf_get_debug_sup(Dwarf_Debug dbg,
     Dwarf_Small   *enddata = 0;
     Dwarf_Unsigned size = 0;
 
+    CHECK_DBG(dbg,error,"dwarf_get_debug_sup()");
     res = load_sup(dbg,error);
     if (res != DW_DLV_OK) {
         return res;
@@ -116,6 +123,9 @@ dwarf_get_debug_sup(Dwarf_Debug dbg,
         &version,
         data,DWARF_HALF_SIZE,
         enddata,error);
+    if (res != DW_DLV_OK) {
+        return res;
+    }
     data+= DWARF_HALF_SIZE;
     if ((data+4) > enddata) {
         dwarfstring m;
@@ -179,7 +189,7 @@ dwarf_get_debug_sup(Dwarf_Debug dbg,
     }
     checksum_ptr = data;
     if (version_out) {
-        *version_out = version;
+        *version_out = (Dwarf_Half)version;
     }
     if (is_supp) {
         *is_supplementary_out = is_supp;

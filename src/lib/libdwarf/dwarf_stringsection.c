@@ -27,8 +27,20 @@
 
 */
 
-#include "config.h"
-#include "dwarf_incl.h"
+#include <config.h>
+
+#include <stddef.h> /* NULL, size_t */
+#include <string.h> /* strlen() */
+
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_opaque.h"
 #include "dwarf_error.h"
 #include "dwarf_util.h"
 
@@ -43,11 +55,7 @@ dwarf_get_str(Dwarf_Debug dbg,
     void *begin = 0;
     void *end = 0;
 
-    if (dbg == NULL) {
-        _dwarf_error(NULL, error, DW_DLE_DBG_NULL);
-        return DW_DLV_ERROR;
-    }
-
+    CHECK_DBG(dbg,error,"dwarf_get_str()");
     if (offset == dbg->de_debug_str.dss_size) {
         /*  Normal (if we've iterated thru the set of strings using
             dwarf_get_str and are at the end). */
@@ -58,7 +66,7 @@ dwarf_get_str(Dwarf_Debug dbg,
         return DW_DLV_ERROR;
     }
 
-    if (string == NULL) {
+    if (!string  || !returned_str_len) {
         _dwarf_error(dbg, error, DW_DLE_STRING_PTR_NULL);
         return DW_DLV_ERROR;
     }

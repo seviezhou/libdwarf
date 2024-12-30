@@ -30,18 +30,21 @@ Copyright (C) 2020 David Anderson. All Rights Reserved.
 */
 
 /*  To print .debug_sup */
-#include "globals.h"
-#ifdef HAVE_STDINT_H
-#include <stdint.h> /* For uintptr_t */
-#endif /* HAVE_STDINT_H */
-#include "naming.h"
-#include "esb.h"                /* For flexible string buffer. */
-#include "esb_using_functions.h"
-#include "sanitized.h"
 
-#define TRUE 1
-#define FALSE 0
+#include <config.h>
+#include <stdio.h> /* FILE decl for dd_esb.h, printf etc */
 
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dd_defined_types.h"
+#include "dd_checkutil.h"
+#include "dd_glflags.h"
+#include "dd_globals.h"
+#include "dd_naming.h"
+#include "dd_esb.h"                /* For flexible string buffer. */
+#include "dd_esb_using_functions.h"
+#include "dd_sanitized.h"
 
 int
 print_debug_sup(Dwarf_Debug dbg,
@@ -77,7 +80,8 @@ print_debug_sup(Dwarf_Debug dbg,
         *error = 0;
         esb_destructor(&truename);
         return DW_DLV_OK;
-    } else if (res == DW_DLV_NO_ENTRY) {
+    }
+    if (res == DW_DLV_NO_ENTRY) {
         esb_destructor(&truename);
         return res;
     }

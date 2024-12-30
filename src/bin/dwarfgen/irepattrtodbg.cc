@@ -2,38 +2,41 @@
   Copyright (C) 2010-2018 David Anderson.  All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
-  modification, are permitted provided that the following conditions are met:
+  modification, are permitted provided that the following
+  conditions are met:
   * Redistributions of source code must retain the above copyright
     notice, this list of conditions and the following disclaimer.
   * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
+    notice, this list of conditions and the following
+    disclaimer in the
+    documentation and/or other materials provided with the
+    distribution.
   * Neither the name of the example nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
+    names of its contributors may be used to endorse or
+    promote products
+    derived from this software without specific prior
+    written permission.
 
-  THIS SOFTWARE IS PROVIDED BY David Anderson ''AS IS'' AND ANY
-  EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-  WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-  DISCLAIMED. IN NO EVENT SHALL David Anderson BE LIABLE FOR ANY
-  DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-  ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  THIS SOFTWARE IS PROVIDED BY David Anderson ''AS IS''
+  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING,
+  BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+  MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+  ARE DISCLAIMED. IN NO EVENT SHALL David Anderson BE
+  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+  LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+  HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+  IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+  USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
+  OF SUCH DAMAGE.
 
 */
 
 // irepattrtodbg.cc
 
 #include "config.h"
-#ifdef HAVE_UNUSED_ATTRIBUTE
-#define  UNUSEDARG __attribute__ ((unused))
-#else
-#define  UNUSEDARG
-#endif
-
 
 /* Windows specific header files */
 #if defined(_WIN32) && defined(HAVE_STDAFX_H)
@@ -42,9 +45,7 @@
 #if HAVE_UNISTD_H
 #include <unistd.h>
 #endif
-#ifdef HAVE_STDLIB_H
 #include <stdlib.h> /* for exit() */
-#endif /* HAVE_STDLIB_H */
 #include <iostream>
 #include <sstream> // For BldName
 #include <iomanip> // iomanp for setw etc
@@ -57,6 +58,8 @@
 #include "strtabdata.h"
 #include "dwarf.h"
 #include "libdwarf.h"
+#include "libdwarfp.h"
+#include "libdwarf_private.h"
 #include "irepresentation.h"
 #include "ireptodbg.h"
 #include "irepattrtodbg.h"
@@ -85,7 +88,7 @@ AddAttrToDie(Dwarf_P_Debug dbg,
     IRepresentation & Irep,
     IRCUdata  &cu,
     Dwarf_P_Die outdie,
-    UNUSEDARG IRDie & irdie,
+    IRDie & irdie,
     IRAttr &irattr)
 {
     int attrnum = irattr.getAttrNum();
@@ -94,6 +97,7 @@ AddAttrToDie(Dwarf_P_Debug dbg,
     IRForm *form_a = irattr.getFormData();
     int res = 0;
 
+    (void)irdie;
     switch(formclass) {
     case DW_FORM_CLASS_UNKNOWN:
         cerr << "ERROR AddAttrToDie: Impossible "
@@ -126,7 +130,7 @@ AddAttrToDie(Dwarf_P_Debug dbg,
 
         res = dwarf_add_AT_targ_address_c(dbg,
             outdie,attrnum,0,sym_index,&a,&error);
-        if(res != DW_DLV_OK) {
+        if (res != DW_DLV_OK) {
             cerr << "ERROR dwarf_add_AT_targ_address fails, attrnum "
                 <<attrnum << endl;
 
@@ -167,6 +171,13 @@ AddAttrToDie(Dwarf_P_Debug dbg,
     case DW_FORM_CLASS_CONSTANT:
         {
         IRFormConstant *f = dynamic_cast<IRFormConstant *>(form_a);
+        if (!f) {
+            cerr << "ERROR Impossible DW_FORM_CLASS_CONSTANT "
+                "cast fails"
+                ", attrnum "
+                <<attrnum << endl;
+            break;
+        }
         Dwarf_Half formv = f->getFinalForm();
         // FIXME: Handle form indirect
         IRFormConstant::Signedness sn = f->getSignedness();
@@ -206,9 +217,8 @@ AddAttrToDie(Dwarf_P_Debug dbg,
                     outdie,attrnum,
                     sval,&a,&error);
             } else {
-                //cerr << "ERROR how can we know "
-                //    "a non-sdata const is signed?, attrnum " <<
-                //    attrnum <<endl;
+                //  ERROR how can we know
+                //  a non-sdata const is signed?
                 res = dwarf_add_AT_signed_const_a(dbg,
                     outdie,attrnum,
                     sval,&a,&error);
@@ -225,7 +235,7 @@ AddAttrToDie(Dwarf_P_Debug dbg,
                     uval_i,&a,&error);
             }
         }
-        if(res != DW_DLV_OK) {
+        if (res != DW_DLV_OK) {
             cerr << "ERROR dwarf_add_AT_ class constant fails," <<
                 dwarf_errmsg(error) <<
                 " attrnum " << attrnum <<
@@ -248,7 +258,7 @@ AddAttrToDie(Dwarf_P_Debug dbg,
         Dwarf_P_Attribute a = 0;
         res = dwarf_add_AT_flag_a(dbg,outdie,attrnum,
             f->getFlagVal(),&a,&error);
-        if(res != DW_DLV_OK) {
+        if (res != DW_DLV_OK) {
             cerr << "ERROR dwarf_add_AT_flag fails, attrnum "
                 <<attrnum << endl;
         }
@@ -297,7 +307,8 @@ AddAttrToDie(Dwarf_P_Debug dbg,
         //FIXME
         IRFormReference *r = dynamic_cast<IRFormReference *>(form_a);
         if (!r) {
-            cerr << "ERROR Impossible DW_FORM_CLASS_REFERENCE cast fails, attrnum "
+            cerr << "ERROR Impossible DW_FORM_CLASS_REFERENCE "
+                "cast fails, attrnum "
                 <<attrnum << endl;
             break;
         }
@@ -315,18 +326,19 @@ AddAttrToDie(Dwarf_P_Debug dbg,
             {
             IRDie *targetofref = r->getTargetInDie();
             Dwarf_P_Die targetoutdie = 0;
-            if(targetofref) {
+            if (targetofref) {
                 targetoutdie = targetofref->getGeneratedDie();
             }
-            if(!targetoutdie) {
-                if(!targetofref) {
-                    cerr << "ERROR CLASS REFERENCE targetdie of reference unknown"
+            if (!targetoutdie) {
+                if (!targetofref) {
+                    cerr << "ERROR CLASS REFERENCE targetdie "
+                        "of reference unknown"
                         <<attrnum << endl;
                     break;
                 }
                 // We must add the attribute when we have the
                 // target Dwarf_P_Die, which should get set shortly.
-                // And do the  dwarf_add_AT_reference() then.
+                // And do the  dwarf_add_AT_reference_c() then.
                 // Before transform_to_disk_form.
                 // NULL targetoutdie allowed here.
                 // Arranging DIE order so there were no forward-refs
@@ -337,14 +349,15 @@ AddAttrToDie(Dwarf_P_Debug dbg,
 
                 res = dwarf_add_AT_reference_c(dbg,outdie,attrnum,
                     /*targetoutdie */NULL,&a,&error);
-                if(res != DW_DLV_OK) {
+                if (res != DW_DLV_OK) {
                     cerr << "ERROR dwarf_add_AT_reference fails, "
                         "attrnum with not yet known targetoutdie "
                         << IToHex(attrnum) <<
                         " " << dwarf_errmsg(error) <<
                         endl;
                 } else {
-                    ClassReferenceFixupData x(dbg,attrnum,outdie,targetofref);
+                    ClassReferenceFixupData x(dbg,attrnum,
+                        outdie,targetofref);
                     cu.insertClassReferenceFixupData(x);
                 }
                 break;
@@ -353,7 +366,7 @@ AddAttrToDie(Dwarf_P_Debug dbg,
 
             res = dwarf_add_AT_reference_c(dbg,outdie,attrnum,
                 targetoutdie,&a,&error);
-            if(res != DW_DLV_OK) {
+            if (res != DW_DLV_OK) {
                 cerr << "ERROR dwarf_add_AT_reference fails, "
                     "attrnum with known targetoutdie " <<
                     IToHex(attrnum) <<
@@ -367,7 +380,7 @@ AddAttrToDie(Dwarf_P_Debug dbg,
             Dwarf_P_Attribute a = 0;
             res = dwarf_add_AT_with_ref_sig8_a(outdie,attrnum,
                 r->getSignature(),&a,&error);
-            if( res != DW_DLV_OK) {
+            if ( res != DW_DLV_OK) {
                 cerr << "ERROR dwarf_add_AT_ref_sig8 fails, attrnum "
                     << IToHex(attrnum) << endl;
             }
@@ -379,12 +392,14 @@ AddAttrToDie(Dwarf_P_Debug dbg,
         {
         IRFormString *f = dynamic_cast<IRFormString *>(form_a);
         if (!f) {
-            cerr << "ERROR Impossible DW_FORM_CLASS_STRING cast fails, attrnum "
+            cerr << "ERROR Impossible DW_FORM_CLASS_STRING "
+                "cast fails, attrnum "
                 <<attrnum << endl;
             break;
         }
         Dwarf_P_Attribute a = 0;
-        // We know libdwarf does not change the string. Historical mistake
+        // We know libdwarf does not change the string.
+        // Historical mistake
         // not making it a const char * argument.
         // Ugly cast.
         // FIXME: handle indirect form (libdwarf needs feature).
@@ -406,7 +421,7 @@ AddAttrToDie(Dwarf_P_Debug dbg,
                 &a,&error);
             break;
         }
-        if(res != DW_DLV_OK) {
+        if (res != DW_DLV_OK) {
             cerr << "ERROR dwarf_add_AT_string fails, attrnum "
                 <<attrnum << endl;
         }
@@ -426,11 +441,10 @@ AddAttrToDie(Dwarf_P_Debug dbg,
     return;
 }
 
-
 void
 IRCUdata::updateClassReferenceTargets()
 {
-    for(std::list<ClassReferenceFixupData>::iterator it =
+    for (std::list<ClassReferenceFixupData>::iterator it =
         classReferenceFixupList_.begin();
         it != classReferenceFixupList_.end();
         ++it) {
@@ -441,7 +455,7 @@ IRCUdata::updateClassReferenceTargets()
 
         int res = dwarf_fixup_AT_reference_die(it->dbg_,
             it->attrnum_,sourcedie,targetdie,&lerror);
-        if(res != DW_DLV_OK) {
+        if (res != DW_DLV_OK) {
             cerr << "Improper dwarf_fixup_AT_reference_die call"
                 << endl;
         }

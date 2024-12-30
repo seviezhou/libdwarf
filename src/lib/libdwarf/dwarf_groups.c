@@ -26,20 +26,27 @@
 
 */
 
-#include "config.h"
-#include <stdio.h>
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif /* HAVE_STDLIB_H */
+#include <config.h>
+
+#include <stdlib.h> /* calloc() free() */
+#include <string.h>  /* strcmp() */
+
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
 #ifdef HAVE_STDINT_H
-#include <stdint.h> /* For uintptr_t */
+#include <stdint.h> /* uintptr_t */
 #endif /* HAVE_STDINT_H */
-#include "dwarf_incl.h"
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_opaque.h"
+#include "dwarf_util.h"
 #include "dwarf_error.h"
 #include "dwarf_tsearch.h"
-
-#define TRUE  1
-#define FALSE 0
 
 #define HASHSEARCH
 
@@ -74,7 +81,6 @@ grp_make_entry(unsigned section, unsigned group,const char *name)
     }
     return e;
 }
-
 
 static DW_TSHASHTYPE
 grp_data_hashfunc(const void *keyp)
@@ -154,12 +160,13 @@ int
 _dwarf_section_get_target_group_from_map(Dwarf_Debug dbg,
     unsigned   obj_section_index,
     unsigned * groupnumber_out,
-    UNUSEDARG Dwarf_Error    * error)
+    Dwarf_Error    * error)
 {
     struct Dwarf_Group_Map_Entry_s entry;
     struct Dwarf_Group_Map_Entry_s *entry2;
     struct Dwarf_Group_Data_s *grp = &dbg->de_groupnumbers;
 
+    (void)error;
     if (!grp->gd_map) {
         return DW_DLV_NO_ENTRY;
     }
@@ -177,28 +184,27 @@ _dwarf_section_get_target_group_from_map(Dwarf_Debug dbg,
     return DW_DLV_NO_ENTRY;
 }
 
-
-
-
 /*  New May 2017.  So users can find out what groups (dwo or COMDAT)
     are in the object and how much to allocate so one can get the
     group-section map data. */
-int dwarf_sec_group_sizes(Dwarf_Debug dbg,
+int
+dwarf_sec_group_sizes(Dwarf_Debug dbg,
     Dwarf_Unsigned * section_count_out,
     Dwarf_Unsigned * group_count_out,
     Dwarf_Unsigned * selected_group_out,
     Dwarf_Unsigned * map_entry_count_out,
-    UNUSEDARG Dwarf_Error    * error)
+    Dwarf_Error    * error)
 {
-    struct Dwarf_Group_Data_s *grp = &dbg->de_groupnumbers;
+    struct Dwarf_Group_Data_s *grp = 0;
 
+    CHECK_DBG(dbg,error,"dwarf_sec_group_sizes()");
+    grp = &dbg->de_groupnumbers;
     *section_count_out   = grp->gd_number_of_sections;
     *group_count_out     = grp->gd_number_of_groups;
     *selected_group_out  = dbg->de_groupnumber;
     *map_entry_count_out = grp->gd_map_entry_count;
     return DW_DLV_OK;
 }
-
 
 static Dwarf_Unsigned map_reccount = 0;
 static struct temp_map_struc_s {
@@ -207,14 +213,14 @@ static struct temp_map_struc_s {
     const char *name;
 } *temp_map_data;
 
-
 static void
 grp_walk_map(const void *nodep,
     const DW_VISIT which,
-    UNUSEDARG const int depth)
+    const int depth)
 {
     struct Dwarf_Group_Map_Entry_s *re = 0;
 
+    (void)depth;
     re = *(struct Dwarf_Group_Map_Entry_s **)nodep;
     if (which == dwarf_postorder || which == dwarf_endorder) {
         return;
@@ -255,7 +261,8 @@ map_sort_compar(const void*l, const void*r)
     values and this function fills in the array entries.
     Output ordered by group number and section number.
     */
-int dwarf_sec_group_map(Dwarf_Debug dbg,
+int
+dwarf_sec_group_map(Dwarf_Debug dbg,
     Dwarf_Unsigned   map_entry_count,
     Dwarf_Unsigned * group_numbers_array,
     Dwarf_Unsigned * sec_numbers_array,
@@ -265,6 +272,7 @@ int dwarf_sec_group_map(Dwarf_Debug dbg,
     Dwarf_Unsigned i = 0;
     struct Dwarf_Group_Data_s *grp = 0;
 
+    CHECK_DBG(dbg,error,"dwarf_sec_group_map()");
     if (temp_map_data) {
         _dwarf_error(dbg,error,DW_DLE_GROUP_INTERNAL_ERROR);
         return DW_DLV_ERROR;
@@ -344,10 +352,11 @@ const char *lookfor_name = 0;
 static void
 grp_walk_for_name(const void *nodep,
     const DW_VISIT which,
-    UNUSEDARG const int depth)
+    const int depth)
 {
     struct Dwarf_Group_Map_Entry_s *re = 0;
 
+    (void)depth;
     re = *(struct Dwarf_Group_Map_Entry_s **)nodep;
     if (which == dwarf_postorder || which == dwarf_endorder) {
         return;
@@ -358,7 +367,6 @@ grp_walk_for_name(const void *nodep,
         }
     }
 }
-
 
 /* returns TRUE or FALSE */
 int

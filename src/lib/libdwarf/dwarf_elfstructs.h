@@ -1,8 +1,6 @@
 /*
-Copyright (c) 2018, David Anderson
+Copyright (c) 2021-2023, David Anderson
 All rights reserved.
-
-Redistribution and use in source and binary forms, with
 or without modification, are permitted provided that the
 following conditions are met:
 
@@ -61,7 +59,7 @@ extern "C" {
 #endif
 
 #ifndef TYP
-#define TYP(n,l) char n[l]
+#define TYP(n,l) char (n)[(l)]
 #endif
 
 typedef struct
@@ -136,7 +134,7 @@ typedef struct
     TYP(sh_info,4);
     TYP(sh_addralign,4);
     TYP(sh_entsize,4);
-}dw_elf32_shdr;
+} dw_elf32_shdr;
 
 typedef struct
 {
@@ -150,7 +148,7 @@ typedef struct
     TYP(sh_info,4);
     TYP(sh_addralign,8);
     TYP(sh_entsize,8);
-}dw_elf64_shdr;
+} dw_elf64_shdr;
 
 typedef struct
 {
@@ -178,7 +176,6 @@ typedef struct
     TYP(r_addend,8); /* signed */
 } dw_elf64_rela;
 
-
 typedef struct {
     TYP(st_name,4);
     TYP(st_value,4);
@@ -197,7 +194,6 @@ typedef struct {
     TYP(st_size,8);
 } dw_elf64_sym;
 
-
 typedef struct
 {
     TYP(d_tag,4); /* signed */
@@ -209,7 +205,6 @@ typedef struct
     TYP(d_tag,8); /* signed */
     TYP(d_val,8); /* Union in original */
 } dw_elf64_dyn;
-
 
 #ifdef __cplusplus
 }

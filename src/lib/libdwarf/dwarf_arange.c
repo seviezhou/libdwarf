@@ -28,15 +28,26 @@
 
 */
 
-#include "config.h"
-#include <stdio.h>
-#include "dwarf_incl.h"
+#include <config.h>
+
+#include <stddef.h> /* NULL size_t */
+#include <stdio.h> /* debug printf */
+
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_opaque.h"
 #include "dwarf_alloc.h"
 #include "dwarf_error.h"
 #include "dwarf_util.h"
 #include "dwarf_arange.h"
 #include "dwarf_global.h"  /* for _dwarf_fixup_* */
-#include "dwarfstring.h"
+#include "dwarf_string.h"
 
 static void
 free_aranges_chain(Dwarf_Debug dbg, Dwarf_Chain head)
@@ -67,7 +78,7 @@ free_aranges_chain(Dwarf_Debug dbg, Dwarf_Chain head)
     callers will not repeat the error often or mind the leaks.
 */
 static int
-dwarf_get_aranges_list(Dwarf_Debug dbg,
+_dwarf_get_aranges_list(Dwarf_Debug dbg,
     Dwarf_Chain  * chain_out,
     Dwarf_Signed * chain_count_out,
     Dwarf_Error  * error)
@@ -89,7 +100,7 @@ dwarf_get_aranges_list(Dwarf_Debug dbg,
     /*  Size in bytes of addresses in target. */
     Dwarf_Small address_size = 0;
     /*  Size in bytes of segment offsets in target. */
-    Dwarf_Small segment_size = 0;
+    Dwarf_Small segment_sel_size = 0;
     /*  Count of total number of aranges. */
     Dwarf_Signed arange_count = 0;
     Dwarf_Arange arange = 0;
@@ -97,8 +108,8 @@ dwarf_get_aranges_list(Dwarf_Debug dbg,
     Dwarf_Byte_Ptr arange_end_section = 0;
     /*  Used to chain Dwarf_Aranges structs. */
     Dwarf_Chain curr_chain = NULL;
-    Dwarf_Chain prev_chain = NULL;
     Dwarf_Chain head_chain = NULL;
+    Dwarf_Chain *plast = &head_chain;
 
     if (!dbg->de_debug_aranges.dss_size) {
         return DW_DLV_NO_ENTRY;
@@ -113,13 +124,12 @@ dwarf_get_aranges_list(Dwarf_Debug dbg,
             This is local length, which begins just
             after the length field itself. */
         Dwarf_Unsigned area_length = 0;
-        Dwarf_Small remainder = 0;
+        Dwarf_Unsigned remainder = 0;
         Dwarf_Unsigned range_entry_size = 0;
         int local_length_size;
         int local_extension_size = 0;
         Dwarf_Small *end_this_arange = 0;
         int res = 0;
-
 
         header_ptr = arange_ptr;
         if (header_ptr >= arange_end_section) {
@@ -137,7 +147,9 @@ dwarf_get_aranges_list(Dwarf_Debug dbg,
         /*  arange_ptr has been incremented appropriately past
             the length field by READ_AREA_LENGTH. */
 
-        if (area_length >  dbg->de_debug_aranges.dss_size) {
+        if (area_length >  dbg->de_debug_aranges.dss_size ||
+            (area_length +local_length_size+local_extension_size)
+            > dbg->de_debug_aranges.dss_size ) {
             free_aranges_chain(dbg,head_chain);
             _dwarf_error(dbg, error,DW_DLE_ARANGES_HEADER_ERROR);
             return DW_DLV_ERROR;
@@ -226,13 +238,19 @@ dwarf_get_aranges_list(Dwarf_Debug dbg,
             return DW_DLV_ERROR;
         }
 
-        /*  Even DWARF2 had a segment_size field here, meaning
-            size in bytes of a segment descriptor on the target
-            system. */
-        segment_size = *(Dwarf_Small *) arange_ptr;
-        if (segment_size > sizeof(Dwarf_Addr)) {
+        /*  Even DWARF2 had a segment_sel_size field here,
+            meaning
+            size in bytes of a segment selector/descriptor
+            on the target system.
+            In reality it is unlikely any non-zero
+            value will work sensibly for the user.  */
+        segment_sel_size = *(Dwarf_Small *) arange_ptr;
+        if (segment_sel_size > 0) {
             free_aranges_chain(dbg,head_chain);
-            _dwarf_error(dbg, error, DW_DLE_SEGMENT_SIZE_BAD);
+            _dwarf_error_string(dbg, error,
+                DW_DLE_SEGMENT_SIZE_BAD,
+                "DW_DLE_SEGMENT_SIZE_BAD: "
+                "segment selector size > 0 is not supported");
             return DW_DLV_ERROR;
         }
         arange_ptr = arange_ptr + sizeof(Dwarf_Small);
@@ -243,11 +261,11 @@ dwarf_get_aranges_list(Dwarf_Debug dbg,
             _dwarf_error(dbg, error, DW_DLE_ARANGE_OFFSET_BAD);
             return DW_DLV_ERROR;
         }
-        range_entry_size = 2*address_size + segment_size;
+        range_entry_size = 2*address_size + segment_sel_size;
         /*  Round arange_ptr offset to next multiple of
             address_size. */
-        remainder = (Dwarf_Unsigned) (arange_ptr - header_ptr) %
-            (range_entry_size);
+        remainder = (Dwarf_Unsigned) ((arange_ptr - header_ptr) %
+            (range_entry_size));
         if (remainder != 0) {
             arange_ptr = arange_ptr + (2 * address_size) - remainder;
         }
@@ -260,25 +278,15 @@ dwarf_get_aranges_list(Dwarf_Debug dbg,
                 read is a segment selector (new in DWARF4).
                 The version number DID NOT CHANGE from 2, which
                 is quite surprising.
-                Also surprising since the segment_size
+                Also surprising since the segment_sel_size
                 was always there
                 in the table header! */
-            /*  We want to test cu_version here but
-                currently with no way to do that.
-                So we just hope no one using
+            /*  We want to test cu_version here
+                and segment_sel_size, but
+                currently with no way segment_sel_size
+                can be other than zero.
+                We just hope no one using
                 segment_selectors, really. FIXME */
-            if (segment_size) {
-                /*  Only applies if cu_version >= 4. */
-                res = _dwarf_read_unaligned_ck_wrapper(dbg,
-                    &segment_selector,
-                    arange_ptr,segment_size,end_this_arange,error);
-                if (res != DW_DLV_OK) {
-                    free_aranges_chain(dbg,head_chain);
-                    return res;
-                }
-                arange_ptr += address_size;
-            }
-
             res = _dwarf_read_unaligned_ck_wrapper(dbg,&range_address,
                 arange_ptr,address_size,end_this_arange,error);
             if (res != DW_DLV_OK) {
@@ -310,7 +318,8 @@ dwarf_get_aranges_list(Dwarf_Debug dbg,
                 }
 
                 arange->ar_segment_selector = segment_selector;
-                arange->ar_segment_selector_size = segment_size;
+                arange->ar_segment_selector_size =
+                    segment_sel_size;
                 arange->ar_address = range_address;
                 arange->ar_length = range_length;
                 arange->ar_info_offset = info_offset;
@@ -320,6 +329,7 @@ dwarf_get_aranges_list(Dwarf_Debug dbg,
                 curr_chain = (Dwarf_Chain)
                     _dwarf_get_alloc(dbg, DW_DLA_CHAIN, 1);
                 if (curr_chain == NULL) {
+                    dwarf_dealloc(dbg,arange,DW_DLA_ARANGE);
                     free_aranges_chain(dbg,head_chain);
                     _dwarf_error(dbg, error, DW_DLE_ALLOC_FAIL);
                     return DW_DLV_ERROR;
@@ -327,12 +337,8 @@ dwarf_get_aranges_list(Dwarf_Debug dbg,
 
                 curr_chain->ch_item = arange;
                 curr_chain->ch_itemtype = DW_DLA_ARANGE;
-                if (head_chain == NULL)
-                    head_chain = prev_chain = curr_chain;
-                else {
-                    prev_chain->ch_next = curr_chain;
-                    prev_chain = curr_chain;
-                }
+                (*plast) = curr_chain;
+                plast = &(curr_chain->ch_next);
             }
             /*  The current set of ranges is terminated by
                 range_address 0 and range_length 0, but that
@@ -404,18 +410,13 @@ dwarf_get_aranges(Dwarf_Debug dbg,
 
     /* Used to chain Dwarf_Aranges structs. */
     Dwarf_Chain curr_chain = NULL;
-    Dwarf_Chain prev_chain = NULL;
     Dwarf_Chain head_chain = NULL;
     Dwarf_Signed i = 0;
     int res = DW_DLV_ERROR;
 
     /* ***** BEGIN CODE ***** */
 
-    if (dbg == NULL) {
-        _dwarf_error(NULL, error, DW_DLE_DBG_NULL);
-        return DW_DLV_ERROR;
-    }
-
+    CHECK_DBG(dbg,error,"dwarf_get_aranges()");
     res = _dwarf_load_section(dbg, &dbg->de_debug_aranges, error);
     if (res != DW_DLV_OK) {
         return res;
@@ -427,7 +428,8 @@ dwarf_get_aranges(Dwarf_Debug dbg,
         return res;
     }
 
-    res = dwarf_get_aranges_list(dbg,&head_chain,&arange_count,error);
+    res = _dwarf_get_aranges_list(dbg,&head_chain,
+        &arange_count,error);
     if (res != DW_DLV_OK) {
         free_aranges_chain(dbg,head_chain);
         return res;
@@ -444,20 +446,21 @@ dwarf_get_aranges(Dwarf_Debug dbg,
     /* See also free_aranges_chain() above */
     curr_chain = head_chain;
     for (i = 0; i < arange_count; i++) {
+        Dwarf_Chain prev = 0;
 
         /*  Copies pointers. No dealloc of ch_item, */
         *(arange_block + i) = curr_chain->ch_item;
         curr_chain->ch_item = 0;
-        prev_chain = curr_chain;
+        prev = curr_chain;
         curr_chain = curr_chain->ch_next;
-        dwarf_dealloc(dbg, prev_chain, DW_DLA_CHAIN);
+        dwarf_dealloc(dbg, prev, DW_DLA_CHAIN);
     }
-
     *aranges = arange_block;
     *returned_count = (arange_count);
     return DW_DLV_OK;
 }
 
+#if 0 /* _dwarf_get_aranges_addr_offsets Unused */
 /*
     This function returns DW_DLV_OK if it succeeds
     and DW_DLV_ERR or DW_DLV_OK otherwise.
@@ -480,7 +483,6 @@ _dwarf_get_aranges_addr_offsets(Dwarf_Debug dbg,
 
     /* Used to chain Dwarf_Aranges structs. */
     Dwarf_Chain curr_chain = NULL;
-    Dwarf_Chain prev_chain = NULL;
     Dwarf_Chain head_chain = NULL;
 
     Dwarf_Signed arange_count = 0;
@@ -494,7 +496,7 @@ _dwarf_get_aranges_addr_offsets(Dwarf_Debug dbg,
     if (error != NULL)
         *error = NULL;
 
-    if (dbg == NULL) {
+    if (IS_INVALID_DBG(dbg)) {
         _dwarf_error(NULL, error, DW_DLE_DBG_NULL);
         return DW_DLV_ERROR;
     }
@@ -509,7 +511,8 @@ _dwarf_get_aranges_addr_offsets(Dwarf_Debug dbg,
     if (res != DW_DLV_OK) {
         return res;
     }
-    res = dwarf_get_aranges_list(dbg,&head_chain,&arange_count,error);
+    res = _dwarf_get_aranges_list(dbg,&head_chain,
+        &arange_count,error);
     if (res != DW_DLV_OK) {
         return res;
     }
@@ -522,6 +525,8 @@ _dwarf_get_aranges_addr_offsets(Dwarf_Debug dbg,
     arange_offsets = (Dwarf_Off *)
         _dwarf_get_alloc(dbg, DW_DLA_ADDR, arange_count);
     if (arange_offsets == NULL) {
+        free_aranges_chain(dbg,head_chain);
+        dwarf_dealloc(dbg,arange_addrs,DW_DLA_ADDR);
         _dwarf_error(dbg, error, DW_DLE_ALLOC_FAIL);
         return DW_DLV_ERROR;
     }
@@ -530,23 +535,29 @@ _dwarf_get_aranges_addr_offsets(Dwarf_Debug dbg,
     for (i = 0; i < arange_count; i++) {
         Dwarf_Arange ar = curr_chain->ch_item;
         int itemtype = curr_chain->ch_itemtype;
+        Dwarf_Chain prev = 0;
 
+        if (!ar) {
+            arange_addrs[i] = 0;
+            arange_offsets[i] = 0;
+            continue;
+        }
         curr_chain->ch_item = 0;
         arange_addrs[i] = ar->ar_address;
         arange_offsets[i] = ar->ar_info_offset;
-        prev_chain = curr_chain;
+        prev = curr_chain;
         curr_chain = curr_chain->ch_next;
-        if (ar && itemtype) {
+        if (itemtype) {
             dwarf_dealloc(dbg, ar, itemtype);
         }
-        dwarf_dealloc(dbg, prev_chain, DW_DLA_CHAIN);
+        dwarf_dealloc(dbg, prev, DW_DLA_CHAIN);
     }
     *count = arange_count;
     *offsets = arange_offsets;
     *addrs = arange_addrs;
     return DW_DLV_OK;
 }
-
+#endif /* 0 */
 
 /*
     This function takes a pointer to a block
@@ -555,7 +566,8 @@ _dwarf_get_aranges_addr_offsets(Dwarf_Debug dbg,
     given address is within the range of an
     address range in the block.  If yes, it
     returns the appropriate Dwarf_Arange.
-    Otherwise, it returns DW_DLV_ERROR.
+    If no, it returns DW_DLV_NO_ENTRY;
+    On error it returns DW_DLV_ERROR.
 */
 int
 dwarf_get_arange(Dwarf_Arange * aranges,
@@ -566,7 +578,7 @@ dwarf_get_arange(Dwarf_Arange * aranges,
     Dwarf_Arange curr_arange = 0;
     Dwarf_Unsigned i = 0;
 
-    if (aranges == NULL) {
+    if (!aranges) {
         _dwarf_error(NULL, error, DW_DLE_ARANGES_NULL);
         return DW_DLV_ERROR;
     }
@@ -579,10 +591,8 @@ dwarf_get_arange(Dwarf_Arange * aranges,
             return DW_DLV_OK;
         }
     }
-
     return DW_DLV_NO_ENTRY;
 }
-
 
 /*
     This function takes an Dwarf_Arange,
@@ -618,9 +628,8 @@ dwarf_get_cu_die_offset(Dwarf_Arange arange,
             return res;
         }
     }
-
     cres = _dwarf_length_of_cu_header(dbg, offset,
-        true, &headerlen,error);
+        TRUE, &headerlen,error);
     if (cres != DW_DLV_OK) {
         return cres;
     }
@@ -647,7 +656,7 @@ dwarf_get_arange_cu_header_offset(Dwarf_Arange arange,
     }
     dbg = arange->ar_dbg;
     /* This applies to debug_info only, not to debug_types. */
-    /*  Like dwarf_get_arange_info this ensures debug_info loaded:
+    /*  Like dwarf_get_arange_info_b() this ensures debug_info loaded:
         the cu_header is in debug_info and will be used else
         we would not call dwarf_get_arange_cu_header_offset. */
     if (!dbg->de_debug_info.dss_data) {
@@ -660,61 +669,22 @@ dwarf_get_arange_cu_header_offset(Dwarf_Arange arange,
     return DW_DLV_OK;
 }
 
-
-
-
 /*
     This function takes a Dwarf_Arange, and returns
-    true if it is not NULL.  It also stores the start
+    TRUE if it is not NULL.  It also stores the start
     address of the range in *start, the length of the
     range in *length, and the offset of the first die
     in the compilation-unit in *cu_die_offset.  It
-    returns false on error.
+    returns FALSE on error.
     If cu_die_offset returned ensures .debug_info loaded so
     the cu_die_offset is meaningful.
-*/
-int
-dwarf_get_arange_info(Dwarf_Arange arange,
-    Dwarf_Addr * start,
-    Dwarf_Unsigned * length,
-    Dwarf_Off * cu_die_offset, Dwarf_Error * error)
-{
-    if (arange == NULL) {
-        _dwarf_error(NULL, error, DW_DLE_ARANGE_NULL);
-        return DW_DLV_ERROR;
-    }
 
-    if (start != NULL)
-        *start = arange->ar_address;
-    if (length != NULL)
-        *length = arange->ar_length;
-    if (cu_die_offset != NULL) {
-        Dwarf_Debug dbg = arange->ar_dbg;
-        Dwarf_Off headerlen = 0;
-        Dwarf_Off offset = arange->ar_info_offset;
-        int cres = 0;
-
-        /* This applies to debug_info only, not to debug_types. */
-        if (!dbg->de_debug_info.dss_data) {
-            int res = _dwarf_load_debug_info(dbg, error);
-            if (res != DW_DLV_OK) {
-                return res;
-            }
-        }
-
-        cres = _dwarf_length_of_cu_header(dbg, offset,
-            true, &headerlen,error);
-        if (cres != DW_DLV_OK) {
-            return cres;
-        }
-        *cu_die_offset = headerlen + offset;
-    }
-    return DW_DLV_OK;
-}
-
-
-/*  New for DWARF4, entries may have segment information.
-    *segment is only meaningful if *segment_entry_size is non-zero. */
+    New for DWARF4, entries may have segment information.
+    *segment is only meaningful
+    if *segment_entry_size is non-zero.
+    But segment_selectors are not fully defined so
+    a non-zero segment_entry_size is not actually
+    usable. */
 int
 dwarf_get_arange_info_b(Dwarf_Arange arange,
     Dwarf_Unsigned*  segment,
@@ -753,7 +723,7 @@ dwarf_get_arange_info_b(Dwarf_Arange arange,
             }
         }
         cres = _dwarf_length_of_cu_header(dbg, offset,
-            true, &headerlen,error);
+            TRUE, &headerlen,error);
         if (cres != DW_DLV_OK) {
             return cres;
         }

@@ -29,59 +29,59 @@ CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
 OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.  */
 
-#include "config.h"
-#include <stdio.h>
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif /* HAVE_STDLIB_H */
-#ifdef HAVE_MALLOC_H
-/* Useful include for some Windows compilers. */
-#include <malloc.h>
-#endif /* HAVE_MALLOC_H */
-#include <string.h>
-#ifdef HAVE_ELF_H
-#include <elf.h>
-#endif /* HAVE_ELF_H */
+#include <config.h>
 
-#if defined(_WIN32)
-#include <io.h>
-#else
-#ifdef HAVE_UNISTD_H
-#include <unistd.h>
-#endif /* HAVE_UNISTD_H */
-#endif /* defined(_WIN32) */
+#include <stddef.h> /* size_t */
+#include <stdio.h>  /* printf() */
+#include <stdlib.h> /* exit() free() */
+#include <string.h> /* memset() strcmp() strlen() */
 
-#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h> /* open(), off_t, size_t, ssize_t */
-#endif /* HAVE_SYS_TYPES_H */
-#include <sys/stat.h> /* for open() */
-#include <fcntl.h> /* for open() */
-#include <errno.h>
-
-#include "dwarf_incl.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_safe_strcpy.h"
+#include "dwarf_opaque.h"
 #include "dwarf_alloc.h"
 #include "dwarf_error.h"
 #include "dwarf_util.h"
-#include "dwarfstring.h"
+#include "dwarf_string.h"
 #include "dwarf_debuglink.h"
 
 static int errcount = 0;
 
 /* dummy func we do not need real one */
 int _dwarf_load_section(Dwarf_Debug dbg,
-    struct Dwarf_Section_s *section,
+    struct Dwarf_Section_s * section,
     Dwarf_Error * error)
 {
+    (void)dbg;
+    (void)section;
+    (void)error;
     return DW_DLV_OK;
 }
 
 /* A horrible fake version for these tests */
 void
-_dwarf_error(Dwarf_Debug dbg, Dwarf_Error * error,
+_dwarf_error(Dwarf_Debug dbg,
+    Dwarf_Error * error,
     Dwarf_Signed errval)
 {
     static struct Dwarf_Error_s stuff;
 
+    (void)dbg;
+    stuff.er_errval = errval;
+    *error = &stuff;
+}
+void
+_dwarf_error_string(Dwarf_Debug dbg,
+    Dwarf_Error * error,
+    Dwarf_Signed errval,
+    char *msg)
+{
+    static struct Dwarf_Error_s stuff;
+
+    (void)dbg;
+    (void)msg;
     stuff.er_errval = errval;
     *error = &stuff;
 }
@@ -130,8 +130,6 @@ _dwarf_check_string_valid(Dwarf_Debug dbg,void *areaptr,
     return DW_DLV_ERROR;
 }
 
-
-
 static void
 check_svalid(int expret,int gotret,int experr,int goterr,int line,
     char *filename_in)
@@ -160,16 +158,15 @@ test1(Dwarf_Debug dbg)
     char *end = testbuffer +100;
     Dwarf_Error error = 0;
 
-
     testbuffer[0] = 0;
-    strcpy(testbuffer,msg);
+    _dwarf_safe_strcpy(testbuffer,sizeof(testbuffer),msg,strlen(msg));
     /* The error value is arbitrary, not realistic. */
     res = _dwarf_check_string_valid(dbg,
         area,str,
         end,DW_DLE_CORRUPT_GNU_DEBUGID_STRING,
         &error);
     check_svalid(DW_DLV_OK,res,
-        0,dwarf_errno(error),
+        0,(int)dwarf_errno(error),
         __LINE__,__FILE__);
 
     end = testbuffer +10;
@@ -178,7 +175,7 @@ test1(Dwarf_Debug dbg)
         end,DW_DLE_STRING_NOT_TERMINATED,
         &error);
     check_svalid(DW_DLV_ERROR, res,
-        DW_DLE_STRING_NOT_TERMINATED, dwarf_errno(error),
+        DW_DLE_STRING_NOT_TERMINATED, (int)dwarf_errno(error),
         __LINE__,__FILE__);
 
     end = testbuffer +10;
@@ -187,7 +184,7 @@ test1(Dwarf_Debug dbg)
         end,DW_DLE_CORRUPT_GNU_DEBUGID_STRING,
         &error);
     check_svalid(DW_DLV_ERROR,res,
-        DW_DLE_CORRUPT_GNU_DEBUGID_STRING,  dwarf_errno(error),
+        DW_DLE_CORRUPT_GNU_DEBUGID_STRING, (int)dwarf_errno(error),
         __LINE__,__FILE__);
 
 }
@@ -210,9 +207,8 @@ checkjoin(int expret,int gotret,char*expstr,char*gotstr,
     }
 }
 
-
 static void
-test2(Dwarf_Debug dbg)
+test2(void)
 {
     dwarfstring targ;
     dwarfstring inp;
@@ -292,11 +288,9 @@ test2(Dwarf_Debug dbg)
     checkjoin(DW_DLV_OK,res,"/",dwarfstring_string(&targ),
         __LINE__,__FILE__);
 
-
     dwarfstring_destructor(&targ);
     dwarfstring_destructor(&inp);
 }
-
 
 static void
 checklinkedto(int expret,int gotret,
@@ -331,7 +325,6 @@ printpaths(unsigned count,char **array,dwarfstring *fullpath)
     }
     printf("\n");
 
-
 }
 
 static unsigned char buildid[20] = {
@@ -350,7 +343,9 @@ test3(Dwarf_Debug dbg)
     char * linkstring = "de";
     dwarfstring result;
     char ** global_prefix = 0;
+#if 0
     unsigned char crc[4];
+#endif
     unsigned buildid_length = 20;
     char **paths_returned = 0;
     unsigned paths_returned_count = 0;
@@ -360,10 +355,12 @@ test3(Dwarf_Debug dbg)
     dwarfstring linkstring_fullpath;
     unsigned i = 0;
 
+#if 0
     crc[0] = 0x12;
     crc[1] = 0x34;
     crc[2] = 0x56;
     crc[3] = 0xab;
+#endif
     res = dwarf_add_debuglink_global_path(dbg,
         "/usr/lib/debug",&error);
     printf("Adding global path /usr/lib/debug\n");
@@ -371,7 +368,7 @@ test3(Dwarf_Debug dbg)
         ++errcount;
         printf("Adding debuglink global path failed line %d %s\n",
             __LINE__,__FILE__);
-        exit(1);
+        exit(EXIT_FAILURE);
     }
     res = dwarf_add_debuglink_global_path(dbg,
         "/fake/lib/debug",&error);
@@ -380,7 +377,7 @@ test3(Dwarf_Debug dbg)
         ++errcount;
         printf("Adding debuglink global path failed line %d %s\n",
             __LINE__,__FILE__);
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     /*  The test will not be repeatable in general
@@ -398,7 +395,9 @@ test3(Dwarf_Debug dbg)
         executablepath,
         linkstring,
         &linkstring_fullpath,
+#if 0
         crc,
+#endif
         buildid,
         buildid_length,
         &paths_returned,&paths_returned_count,
@@ -423,7 +422,9 @@ test3(Dwarf_Debug dbg)
         dbg->de_gnu_global_path_count,
         executablepath,linkstring,
         &linkstring_fullpath,
+#if 0
         crc,
+#endif
         buildid,
         buildid_length,
         &paths_returned,&paths_returned_count,
@@ -448,7 +449,9 @@ test3(Dwarf_Debug dbg)
         dbg->de_gnu_global_path_count,
         executablepath,linkstring,
         &linkstring_fullpath,
+#if 0
         crc,
+#endif
         buildid,
         buildid_length,
         &paths_returned,&paths_returned_count,
@@ -472,16 +475,18 @@ test3(Dwarf_Debug dbg)
     dwarfstring_destructor(&linkstring_fullpath);
 }
 
-int main()
+int main(void)
 {
     Dwarf_Debug dbg = 0;
     struct Dwarf_Debug_s db;
 
     dbg = &db;
     memset(dbg,0,sizeof(db));
+    /*  Faking up so it looks valid. See  dwarf_opaque.h */
+    dbg->de_magic =  DBG_IS_VALID;
 
     test1(dbg);
-    test2(dbg);
+    test2();
     test3(dbg);
 
     if (errcount) {

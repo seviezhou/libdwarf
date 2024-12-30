@@ -1,6 +1,6 @@
 /*
 
-  Copyright (C) 2015-2015 David Anderson. All Rights Reserved.
+  Copyright (C) 2015-2023 David Anderson. All Rights Reserved.
 
   This program is free software; you can redistribute it
   and/or modify it under the terms of version 2.1 of the
@@ -27,17 +27,14 @@
 
 */
 
-
-
 #define HASHSEARCH
 
 #ifdef HASHSEARCH
 /* Only needed for hash based search in a tsearch style. */
-#define INITTREE(x,y) x = dwarf_initialize_search_hash(&(x),(y),0)
+#define INITTREE(x,y) (x) = dwarf_initialize_search_hash(&(x),(y),0)
 #else
 #define INITTREE(x,y)
 #endif /* HASHSEARCH */
-
 
 /*  Contexts are in a list in a dbg and
     do not move once established.

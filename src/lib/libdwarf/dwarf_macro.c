@@ -28,18 +28,25 @@
 
 */
 
-#include "config.h"
-#include <stdio.h>
-#include <limits.h>
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif /* HAVE_STDLIB_H */
-#include "dwarf_incl.h"
+#include <config.h>
+
+#include <limits.h> /* ULONG_MAX */
+#include <string.h> /* memcpy() strlen() */
+
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_safe_strcpy.h"
+#include "dwarf_opaque.h"
 #include "dwarf_alloc.h"
 #include "dwarf_error.h"
 #include "dwarf_util.h"
 #include "dwarf_macro.h"
-
 
 #define LEFTPAREN '('
 #define RIGHTPAREN ')'
@@ -49,7 +56,9 @@
     the value.  Returns pointer to 0 byte at end of string
     if no value found (meaning the value is the empty string).
 
-    Only understands well-formed dwarf macinfo strings.
+    Only understands well-formed .debug_macinfo
+    and .debug_macro strings.
+
 */
 char *
 dwarf_find_macro_value_start(char *str)
@@ -60,12 +69,11 @@ dwarf_find_macro_value_start(char *str)
     for (lcp = str; *lcp; ++lcp) {
         switch (*lcp) {
         case LEFTPAREN:
-            funclike = 1;
+            ++funclike;
             break;
         case RIGHTPAREN:
-            /*  lcp+1 must be a space, and following
-                char is the value */
-            return lcp + 2;
+            --funclike;
+            break;
         case SPACE:
             /*  We allow extraneous spaces inside macro parameter **
                 list, just in case... This is not really needed. */
@@ -73,14 +81,16 @@ dwarf_find_macro_value_start(char *str)
                 return lcp + 1;
             }
             break;
+        default:
+            break;
         }
     }
     /*  Never found value: returns pointer to the 0 byte at end of
-        string. */
+        string.
+        Or maybe the parentheses are unbalanced! Compiler error?
+    */
     return lcp;
-
 }
-
 
 /*
    Try to keep fileindex correct in every Macro_Details
@@ -137,7 +147,7 @@ _dwarf_macro_stack_push_index(Dwarf_Debug dbg, Dwarf_Signed indx,
         }
         if (ms->st_base) {
             memcpy(newbase, ms->st_base,
-                ms->st_next_to_use * sizeof(Dwarf_Signed));
+                ms->st_next_to_use * sizeof(*newbase));
             dwarf_dealloc(dbg, ms->st_base, DW_DLA_STRING);
         }
         ms->st_base = newbase;
@@ -201,6 +211,7 @@ dwarf_get_macro_details(Dwarf_Debug dbg,
     unsigned long str_space = 0;
     int done = 0;
     unsigned long space_needed = 0;
+    unsigned long space_used = 0;
     unsigned long string_offset = 0;
     Dwarf_Small *return_data = 0;
     Dwarf_Small *pdata = 0;
@@ -211,10 +222,11 @@ dwarf_get_macro_details(Dwarf_Debug dbg,
 
     unsigned long count = 0;
     unsigned long max_count = (unsigned long) maximum_count;
-
     _dwarf_reset_index_macro_stack(&msdata);
-    if (dbg == NULL) {
-        _dwarf_error(NULL, error, DW_DLE_DBG_NULL);
+    if (IS_INVALID_DBG(dbg)) {
+        _dwarf_error_string(NULL, error, DW_DLE_DBG_NULL,
+            "DW_DLE_DBG_NULL: Either null or it contains"
+            "a stale Dwarf_Debug pointer");
         free_macro_stack(dbg,&msdata);
         return DW_DLV_ERROR;
     }
@@ -246,9 +258,7 @@ dwarf_get_macro_details(Dwarf_Debug dbg,
         max_count = ULONG_MAX;
     }
 
-
     /* how many entries and how much space will they take? */
-
     endloc = (pnext - macro_base);
     if (endloc >= dbg->de_debug_macinfo.dss_size) {
         if (endloc == dbg->de_debug_macinfo.dss_size) {
@@ -263,9 +273,6 @@ dwarf_get_macro_details(Dwarf_Debug dbg,
     for (count = 0; !done && count < max_count; ++count) {
         unsigned long slen = 0;
 
-        /* Set but not used */
-        UNUSEDARG Dwarf_Unsigned utemp = 0;
-
         uc = *pnext;
         ++pnext;                /* get past the type code */
         switch (uc) {
@@ -274,7 +281,7 @@ dwarf_get_macro_details(Dwarf_Debug dbg,
             /* line, string */
         case DW_MACINFO_vendor_ext:
             /* number, string */
-            DECODE_LEB128_UWORD_CK(pnext,utemp,dbg,error,
+            SKIP_LEB128_CK(pnext,dbg,error,
                 macro_end);
             if (((Dwarf_Unsigned)(pnext - macro_base)) >=
                 dbg->de_debug_macinfo.dss_size) {
@@ -289,7 +296,7 @@ dwarf_get_macro_details(Dwarf_Debug dbg,
             if (res != DW_DLV_OK) {
                 return res;
             }
-            slen = strlen((char *) pnext) + 1;
+            slen = (unsigned long)strlen((char *) pnext) + 1;
             pnext += slen;
             if (((Dwarf_Unsigned)(pnext - macro_base)) >=
                 dbg->de_debug_macinfo.dss_size) {
@@ -302,7 +309,7 @@ dwarf_get_macro_details(Dwarf_Debug dbg,
             break;
         case DW_MACINFO_start_file:
             /* line, file index */
-            DECODE_LEB128_UWORD_CK(pnext,utemp,dbg,error,
+            SKIP_LEB128_CK(pnext,dbg,error,
                 macro_end);
             if (((Dwarf_Unsigned)(pnext - macro_base)) >=
                 dbg->de_debug_macinfo.dss_size) {
@@ -311,7 +318,7 @@ dwarf_get_macro_details(Dwarf_Debug dbg,
                     DW_DLE_DEBUG_MACRO_INCONSISTENT);
                 return DW_DLV_ERROR;
             }
-            DECODE_LEB128_UWORD_CK(pnext,utemp,dbg,error,
+            SKIP_LEB128_CK(pnext,dbg,error,
                 macro_end);
             if (((Dwarf_Unsigned)(pnext - macro_base)) >=
                 dbg->de_debug_macinfo.dss_size) {
@@ -324,7 +331,10 @@ dwarf_get_macro_details(Dwarf_Debug dbg,
             break;
 
         case DW_MACINFO_end_file:
-            if (--depth == 0) {
+            if (depth) {
+                --depth;
+            }
+            if (!depth) {
                 /*  done = 1; no, do not stop here,
                     at least one gcc had
                     the wrong depth settings in the
@@ -362,6 +372,7 @@ dwarf_get_macro_details(Dwarf_Debug dbg,
 
     /* extra 2 not really needed */
     space_needed = string_offset + str_space + 2;
+    space_used = 0;
     return_data = pdata = (Dwarf_Small *)_dwarf_get_alloc(
         dbg, DW_DLA_STRING, space_needed);
     latest_str_loc = pdata + string_offset;
@@ -385,6 +396,7 @@ dwarf_get_macro_details(Dwarf_Debug dbg,
 
         endloc = (pnext - macro_base);
         if (endloc > dbg->de_debug_macinfo.dss_size) {
+            dwarf_dealloc(dbg,return_data,DW_DLA_STRING);
             free_macro_stack(dbg,&msdata);
             _dwarf_error(dbg, error, DW_DLE_DEBUG_MACRO_LENGTH_BAD);
             return DW_DLV_ERROR;
@@ -402,8 +414,13 @@ dwarf_get_macro_details(Dwarf_Debug dbg,
             /* line, string */
         case DW_MACINFO_vendor_ext:
             /* number, string */
-            DECODE_LEB128_UWORD_CK(pnext,v1,dbg,error,
-                macro_end);
+            res = _dwarf_leb128_uword_wrapper(dbg,&pnext,
+                macro_end,&v1,error);
+            if (res != DW_DLV_OK) {
+                free_macro_stack(dbg,&msdata);
+                dwarf_dealloc(dbg, return_data, DW_DLA_STRING);
+                return res;
+            }
             pdmd->dmd_lineno = v1;
 
             if (((Dwarf_Unsigned)(pnext - macro_base)) >=
@@ -418,12 +435,16 @@ dwarf_get_macro_details(Dwarf_Debug dbg,
                 macro_base,pnext,macro_end,
                 DW_DLE_MACINFO_STRING_BAD,error);
             if (res != DW_DLV_OK) {
+                dwarf_dealloc(dbg,return_data,DW_DLA_STRING);
                 return res;
             }
-            slen = strlen((char *) pnext) + 1;
-            strcpy((char *) latest_str_loc, (char *) pnext);
+            slen = (unsigned long)strlen((char *) pnext) + 1;
+            _dwarf_safe_strcpy((char *)latest_str_loc,
+                space_needed - space_used,
+                (const char *)pnext,slen-1);
             pdmd->dmd_macro = (char *) latest_str_loc;
             latest_str_loc += slen;
+            space_used +=slen;
             pnext += slen;
             if (((Dwarf_Unsigned)(pnext - macro_base)) >=
                 dbg->de_debug_macinfo.dss_size) {
@@ -436,8 +457,13 @@ dwarf_get_macro_details(Dwarf_Debug dbg,
             break;
         case DW_MACINFO_start_file:
             /* Line, file index */
-            DECODE_LEB128_UWORD_CK(pnext,v1,dbg,error,
-                macro_end);
+            res = _dwarf_leb128_uword_wrapper(dbg,&pnext,
+                macro_end,&v1,error);
+            if (res != DW_DLV_OK) {
+                free_macro_stack(dbg,&msdata);
+                dwarf_dealloc(dbg, return_data, DW_DLA_STRING);
+                return res;
+            }
             pdmd->dmd_lineno = v1;
             if (((Dwarf_Unsigned)(pnext - macro_base)) >=
                 dbg->de_debug_macinfo.dss_size) {
@@ -447,8 +473,13 @@ dwarf_get_macro_details(Dwarf_Debug dbg,
                     DW_DLE_DEBUG_MACRO_INCONSISTENT);
                 return DW_DLV_ERROR;
             }
-            DECODE_LEB128_UWORD_CK(pnext,v1,dbg,error,
-                macro_end);
+            res = _dwarf_leb128_uword_wrapper(dbg,&pnext,
+                macro_end,&v1,error);
+            if (res != DW_DLV_OK) {
+                free_macro_stack(dbg,&msdata);
+                dwarf_dealloc(dbg, return_data, DW_DLA_STRING);
+                return res;
+            }
             pdmd->dmd_fileindex = v1;
             (void) _dwarf_macro_stack_push_index(dbg, fileindex,
                 &msdata);

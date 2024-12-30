@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2015-2020 David Anderson. All Rights Reserved.
+  Copyright (C) 2015-2022 David Anderson. All Rights Reserved.
 
   This program is free software; you can redistribute it
   and/or modify it under the terms of version 2.1 of the
@@ -26,38 +26,39 @@
 
 */
 
-#include "config.h"
-#include <stdio.h>
-#include <limits.h>
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif /* HAVE_STDLIB_H */
-#ifdef HAVE_MALLOC_H
-/* Useful include for some Windows compilers. */
-#include <malloc.h>
-#endif /* HAVE_MALLOC_H */
-#include "dwarf_incl.h"
+#include <config.h>
+
+#include <stdlib.h> /* calloc() free() malloc() */
+#include <string.h> /* memset() strcat() strlen() */
+
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_safe_strcpy.h"
+#include "dwarf_opaque.h"
 #include "dwarf_alloc.h"
 #include "dwarf_error.h"
 #include "dwarf_util.h"
 #include "dwarf_macro5.h"
-#include "dwarfstring.h"
+#include "dwarf_string.h"
+#include "dwarf_str_offsets.h"
 
-#define TRUE 1
-#define FALSE 0
-
-#define MC_SENTINAL  0xada
+#define MC_SENTINEL  0xada
 
 #define CHECKNULLCONTEXT(m,d,e)             \
-if (!m || m->mc_sentinel != MC_SENTINAL) {  \
-    if (m) { d = (m)->mc_dbg;  }            \
-    _dwarf_error_string(d, e,               \
+if (!(m) || (m)->mc_sentinel != MC_SENTINEL) {  \
+    if (m) { (d) = (m)->mc_dbg;  }            \
+    _dwarf_error_string((d), (e),               \
         DW_DLE_BAD_MACRO_HEADER_POINTER,    \
         "DW_DLE_BAD_MACRO_HEADER_POINTER "  \
         " NULL header or corrupt header");    \
     return DW_DLV_ERROR;                    \
 }
-
 
 /*  Section 6.3: Macro Information:
     Each macro unit ends with an entry
@@ -95,15 +96,12 @@ struct Dwarf_Macro_Forms_s dw5formsarray[] = {
     {DW_MACRO_undef_strx,2,dwarf_udata_strx_form},
 };
 
-
-
 /* Represents DWARF 5 macro info */
 /* .debug_macro predefined, in order by value  */
 static const struct Dwarf_Macro_OperationsList_s
     dwarf_default_macro_opslist = {
 13, dw5formsarray
 };
-
 
 static int _dwarf_internal_macro_context_by_offset(Dwarf_Debug dbg,
     Dwarf_Unsigned offset,
@@ -222,7 +220,7 @@ _dwarf_skim_forms(Dwarf_Debug dbg,
             }
             v = strlen((char *) mdata) + 1;
             totallen += v;
-            mdata += v;
+            mdata    += v;
             }
             break;
         case DW_FORM_block:
@@ -278,7 +276,7 @@ _dwarf_skim_forms(Dwarf_Debug dbg,
 
 #if 0 /* FOR DEBUGGING */
 static void
-dump_bytes(Dwarf_Small * start, long len)
+dump_bytes_x(Dwarf_Small * start, long len)
 {
     Dwarf_Small *end = start + len;
     Dwarf_Small *cur = start;
@@ -308,11 +306,11 @@ is_defundef(unsigned op)
     case DW_MACRO_define_sup:
     case DW_MACRO_undef_sup:
         return TRUE;
+    default: break;
     }
     return FALSE;
 }
-#endif /* FOR DEBUGGING */
-
+#endif /*0*/
 
 /*  On first call (for this macro_context),
     build_ops_array is FALSE. On second,
@@ -476,7 +474,6 @@ dwarf_get_macro_op(Dwarf_Macro_Context macro_context,
     return DW_DLV_OK;
 }
 
-
 /*  Here a DW_DLV_NO_ENTRY return means the macro operator
     is not a def/undef operator. */
 int
@@ -584,7 +581,6 @@ dwarf_get_macro_defundef(Dwarf_Macro_Context macro_context,
             dbg, error,endptr);
         /* mdata_copy is for call below */
 
-
         *index = stringindex;
         *forms_count = lformscount;
 
@@ -592,7 +588,6 @@ dwarf_get_macro_defundef(Dwarf_Macro_Context macro_context,
         ress = _dwarf_extract_string_offset_via_str_offsets(dbg,
             mdata_copy,
             endptr,
-            DW_AT_macros, /*arbitrary, unused by called routine. */
             form1,
             macro_context->mc_cu_context,
             &offsettostr,
@@ -648,7 +643,8 @@ dwarf_get_macro_defundef(Dwarf_Macro_Context macro_context,
             &localstring, &lerr);
         if (resup != DW_DLV_OK) {
             if (resup == DW_DLV_ERROR) {
-                int myerrno = dwarf_errno(lerr);
+                Dwarf_Unsigned myerrno =
+                    (unsigned int)dwarf_errno(lerr);
                 if (myerrno == DW_DLE_NO_TIED_FILE_AVAILABLE) {
                     *macro_string =
                         (char *)"<DW_FORM_str_sup-no-tied_file>";
@@ -657,7 +653,7 @@ dwarf_get_macro_defundef(Dwarf_Macro_Context macro_context,
                     *macro_string =
                         (char *)"<Error: DW_FORM_str_sup-got-error>";
                 }
-                dwarf_dealloc(dbg,lerr,DW_DLA_ERROR);
+                dwarf_dealloc_error(dbg,lerr);
             } else {
                 *macro_string = "<DW_FORM_str_sup-no-entry>";
             }
@@ -711,8 +707,8 @@ static const char *
 construct_from_dir_and_name(const char *dir,
     const char *name)
 {
-    int truelen = 0;
-    char *final = 0;
+    size_t truelen = 0;
+    char  *final   = 0;
 
     /* Allow for NUL char and added /  */
     truelen = strlen(dir) + strlen(name) + 1 +1;
@@ -749,7 +745,6 @@ construct_at_path_from_parts(Dwarf_Macro_Context mc)
         mc->mc_at_comp_dir,mc->mc_at_name);
     return mc->mc_file_path;
 }
-
 
 int
 dwarf_get_macro_startend_file(Dwarf_Macro_Context macro_context,
@@ -918,6 +913,7 @@ valid_macro_form(Dwarf_Half form)
     case DW_FORM_strp:
     case DW_FORM_strx:
         return TRUE;
+    default: break;
     }
     return FALSE;
 }
@@ -1001,10 +997,12 @@ read_operands_table(Dwarf_Macro_Context macro_context,
     for (i = 0; i < operand_table_count; ++i) {
         /*  Compiler warning about unused opcode_number
             variable should be ignored. */
-        UNUSEDARG Dwarf_Small opcode_number = 0;
         Dwarf_Unsigned formcount = 0;
+#if 0   /* No need to actually read, just update pointer*/
+        Dwarf_Small opcode_number = 0;
         READ_UNALIGNED_CK(dbg,opcode_number,Dwarf_Small,
             macro_data,sizeof(Dwarf_Small),error,endptr);
+#endif /*0*/
         macro_data += sizeof(Dwarf_Small);
 
         DECODE_LEB128_UWORD_CK(macro_data,formcount,
@@ -1048,7 +1046,7 @@ read_operands_table(Dwarf_Macro_Context macro_context,
             dbg, error, endptr);
 
         curformentry->mf_code = opcode_number;
-        curformentry->mf_formcount = formcount;
+        curformentry->mf_formcount = (Dwarf_Small)formcount;
 
         cur_offset = (formcount+ macro_data) - section_base;
         if (cur_offset >= section_size) {
@@ -1120,7 +1118,7 @@ translate_srcfiles_to_srcfiles2(char **srcfiles,
         if (!newstr) {
             return DW_DLV_ERROR;
         }
-        strcpy(newstr,ostr);
+        _dwarf_safe_strcpy(newstr,slen+1,ostr,slen);
         srcfiles2[i] = newstr;
     }
     return DW_DLV_OK;
@@ -1138,7 +1136,6 @@ drop_srcfiles(Dwarf_Debug dbg,char ** srcfiles,
     }
     dwarf_dealloc(dbg, srcfiles, DW_DLA_LIST);
 }
-
 
 static int
 _dwarf_internal_macro_context(Dwarf_Die die,
@@ -1334,7 +1331,6 @@ _dwarf_internal_macro_context_by_offset(Dwarf_Debug dbg,
     macro_data = macro_header;
     section_end = section_base +section_size;
 
-
     macro_context = (Dwarf_Macro_Context)
         _dwarf_get_alloc(dbg,DW_DLA_MACRO_CONTEXT,1);
     if (!macro_context) {
@@ -1399,8 +1395,8 @@ _dwarf_internal_macro_context_by_offset(Dwarf_Debug dbg,
     macro_context->mc_macro_header = macro_header;
     macro_context->mc_section_offset = macro_offset;
     macro_context->mc_section_size = section_size;
-    macro_context->mc_version_number = version;
-    macro_context->mc_flags = flags;
+    macro_context->mc_version_number = (Dwarf_Half)version;
+    macro_context->mc_flags = (Dwarf_Small)flags;
     macro_context->mc_dbg = dbg;
     macro_context->mc_offset_size_flag =
         flags& MACRO_OFFSET_SIZE_FLAG?TRUE:FALSE;
@@ -1444,8 +1440,8 @@ _dwarf_internal_macro_context_by_offset(Dwarf_Debug dbg,
 
     macro_data += optablesize;
     macro_context->mc_macro_ops = macro_data;
-    macro_context->mc_macro_header_length =macro_data - macro_header;
-
+    macro_context->mc_macro_header_length =
+        (Dwarf_Half)(macro_data - macro_header);
     build_ops_array = FALSE;
     res = _dwarf_get_macro_ops_count_internal(macro_context,
         build_ops_array,
@@ -1597,10 +1593,11 @@ dwarf_get_macro_context_by_offset(Dwarf_Die cu_die,
 
 int dwarf_get_macro_section_name(Dwarf_Debug dbg,
     const char **sec_name_out,
-    UNUSEDARG Dwarf_Error *error)
+    Dwarf_Error *error)
 {
     struct Dwarf_Section_s *sec = 0;
 
+    CHECK_DBG(dbg,error,"dwarf_get_macro_section_name()");
     sec = &dbg->de_debug_macro;
     if (sec->dss_size == 0) {
         /* We don't have such a  section at all. */
@@ -1629,7 +1626,7 @@ _dwarf_macro_constructor(Dwarf_Debug dbg, void *m)
     /* Nothing to do, the space is zeroed out */
     Dwarf_Macro_Context mc= (Dwarf_Macro_Context)m;
     /* Arbitrary sentinel. For debugging. */
-    mc->mc_sentinel = MC_SENTINAL;
+    mc->mc_sentinel = MC_SENTINEL;
     mc->mc_dbg = dbg;
     return DW_DLV_OK;
 }

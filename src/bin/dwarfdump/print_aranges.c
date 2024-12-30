@@ -29,14 +29,22 @@ Portions Copyright 2008-2020 David Anderson. All rights reserved.
 
 /* SGI has moved from the Crittenden Lane address.  */
 
-#include "globals.h"
-#include "naming.h"
-#include "esb.h"
-#include "esb_using_functions.h"
-#include "sanitized.h"
+#include <config.h>
+#include <stdio.h> /* FILE decl for dd_esb.h */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dd_defined_types.h"
+#include "dd_checkutil.h"
+#include "dd_glflags.h"
+#include "dd_globals.h"
+#include "dd_naming.h"
+#include "dd_esb.h"
+#include "dd_esb_using_functions.h"
+#include "dd_sanitized.h"
 
 #include "print_sections.h"
-
 
 static int
 do_checking(Dwarf_Debug dbg, Dwarf_Arange *arange_buf,Dwarf_Signed i,
@@ -51,7 +59,6 @@ do_checking(Dwarf_Debug dbg, Dwarf_Arange *arange_buf,Dwarf_Signed i,
         has them.*/
     int is_info = 1;
 
-
     dres = dwarf_get_arange_cu_header_offset(
         arange_buf[i],&cuhdroff,err);
     if (dres == DW_DLV_OK) {
@@ -60,13 +67,13 @@ do_checking(Dwarf_Debug dbg, Dwarf_Arange *arange_buf,Dwarf_Signed i,
         /* Get the CU offset for easy error reporting */
         if (first_cu || cu_die_offset != cu_die_offset_prev) {
             dres = dwarf_die_offsets(cu_die,&glflags.
-                DIE_overall_offset,
+                DIE_section_offset,
                 &glflags.DIE_offset,err);
             glflags.DIE_CU_overall_offset =
-                glflags.DIE_overall_offset;
+                glflags.DIE_section_offset;
             glflags.DIE_CU_offset = glflags.DIE_offset;
             if (dres != DW_DLV_OK) {
-                print_error_and_continue(dbg,
+                print_error_and_continue(
                     "ERROR: reading dwarf_die_offsets", dres, *err);
                 return dres;
             }
@@ -75,30 +82,43 @@ do_checking(Dwarf_Debug dbg, Dwarf_Arange *arange_buf,Dwarf_Signed i,
             dbg,cuhdroff,is_info,&cudieoff2,err);
         if (dres == DW_DLV_OK) {
             /* Get the CU offset for easy error reporting */
-            dwarf_die_offsets(cu_die,&glflags.DIE_overall_offset,
+            int res2=0;
+
+            res2 = dwarf_die_offsets(cu_die,
+                &glflags.DIE_section_offset,
                 &glflags.DIE_offset,err);
-            glflags.DIE_CU_overall_offset =
-                glflags.DIE_overall_offset;
-            glflags.DIE_CU_offset = glflags.DIE_offset;
-            DWARF_CHECK_COUNT(aranges_result,1);
-            if (cu_die_offset != cudieoff2) {
-                printf("Error, cu_die offsets mismatch,  0x%"
-                    DW_PR_DUx " != 0x%" DW_PR_DUx
-                    " from arange data",
-                    cu_die_offset,cudieoff2);
-                DWARF_CHECK_ERROR(aranges_result,
-                    " dwarf_get_cu_die_offset_given_cu..."
-                    " gets wrong offset");
+            if (res2 == DW_DLV_OK) {
+                glflags.DIE_CU_overall_offset =
+                    glflags.DIE_section_offset;
+                glflags.DIE_CU_offset = glflags.DIE_offset;
+                DWARF_CHECK_COUNT(aranges_result,1);
+                if (cu_die_offset != cudieoff2) {
+                    printf("Error, cu_die offsets mismatch,  0x%"
+                        DW_PR_DUx " != 0x%" DW_PR_DUx
+                        " from arange data",
+                        cu_die_offset,cudieoff2);
+                    DWARF_CHECK_ERROR(aranges_result,
+                        " dwarf_get_cu_die_offset_given_cu..."
+                        " gets wrong offset");
+                }
+            } else {
+                /* DW_DLV_ERROR or DW_DLV_NO_ENTRY */
+                print_error_and_continue(
+                    "ERROR from arange checking offsets "
+                    "dwarf_die_offsets... fails",
+                    dres, *err);
             }
         } else {
-            print_error_and_continue(dbg,
+            /* DW_DLV_ERROR or DW_DLV_NO_ENTRY */
+            print_error_and_continue(
                 "ERROR from arange checking "
                 "dwarf_get_cu_die_offset_given... fails",
                 dres, *err);
             return dres;
         }
     } else {
-        print_error_and_continue(dbg,
+        /* DW_DLV_ERROR or DW_DLV_NO_ENTRY */
+        print_error_and_continue(
             "ERROR: from arange checking "
             "dwarf_get_arange_cu_header_offset fails",
                 dres, *err);
@@ -119,7 +139,8 @@ do_checking(Dwarf_Debug dbg, Dwarf_Arange *arange_buf,Dwarf_Signed i,
                 " gets wrong offset");
         }
     } else {
-        print_error_and_continue(dbg,
+        /* DW_DLV_ERROR or DW_DLV_NO_ENTRY */
+        print_error_and_continue(
             "ERROR: from arange checking "
             "dwarf_get_cu_die_offset fails",
             dres,*err);
@@ -174,7 +195,7 @@ print_aranges(Dwarf_Debug dbg,Dwarf_Error *ga_err)
         esb_destructor(&truename);
     }
     if (ares == DW_DLV_ERROR) {
-        print_error_and_continue(dbg,
+        print_error_and_continue(
             "Unable to load the .debug_aranges section.",
             ares,*ga_err);
         return ares;
@@ -188,6 +209,8 @@ print_aranges(Dwarf_Debug dbg,Dwarf_Error *ga_err)
             Dwarf_Unsigned length = 0;
             Dwarf_Off cu_die_offset = 0;
             Dwarf_Die cu_die = NULL;
+            Dwarf_Bool is_info = TRUE; /* has to be debug_info
+                as this involves addresses. */
 
             aires = dwarf_get_arange_info_b(arange_buf[i],
                 &segment,
@@ -213,7 +236,8 @@ print_aranges(Dwarf_Debug dbg,Dwarf_Error *ga_err)
                 int dres;
 
                 /*  Get basic locations for error reporting */
-                dres = dwarf_offdie(dbg, cu_die_offset,
+                dres = dwarf_offdie_b(dbg, cu_die_offset,
+                    is_info,
                     &cu_die, ga_err);
                 if (dres != DW_DLV_OK) {
                     struct esb_s m;
@@ -223,7 +247,7 @@ print_aranges(Dwarf_Debug dbg,Dwarf_Error *ga_err)
                     }
                     esb_constructor(&m);
                     esb_append_printf_s(&m,
-                        "\nERROR: dwarf_offdie() gets a "
+                        "\nERROR: dwarf_offdie_b() gets a "
                         "return of %s ",
                         failtype);
                     esb_append_printf_i(&m," finding the "
@@ -245,6 +269,7 @@ print_aranges(Dwarf_Debug dbg,Dwarf_Error *ga_err)
                         &should_skip,cu_die);
                     if (should_skip) {
                         dwarf_dealloc(dbg,cu_die,DW_DLA_DIE);
+                        continue;
                     }
                 }
                 /*  Get producer name for this CU and update
@@ -291,7 +316,7 @@ print_aranges(Dwarf_Debug dbg,Dwarf_Error *ga_err)
                     if (cures3 != DW_DLV_OK) {
                         struct esb_s m;
                         const char *failtype = "no-entry";
-                        if (dres == DW_DLV_ERROR) {
+                        if (cures3 == DW_DLV_ERROR) {
                             failtype = "error";
                         }
                         esb_constructor(&m);

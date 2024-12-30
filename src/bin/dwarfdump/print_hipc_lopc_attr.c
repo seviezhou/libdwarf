@@ -32,24 +32,28 @@ Portions Copyright 2007-2020 David Anderson. All rights reserved.
     Floor, Boston, MA 02110-1301, USA.  SGI has moved from
     the Crittenden Lane address.  */
 
+#include <config.h>
+#include <stdio.h> /* FILE decl for dd_esb.h, printf etc */
 
-#include "globals.h"
-#ifdef HAVE_STDINT_H
-#include <stdint.h> /* For uintptr_t */
-#endif /* HAVE_STDINT_H */
-#include "naming.h"
-#include "esb.h"                /* For flexible string buffer. */
-#include "esb_using_functions.h"
-#include "sanitized.h"
-#include "print_frames.h"  /* for print_location_operations() . */
-#include "macrocheck.h"
-#include "helpertree.h"
-#include "tag_common.h"
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dd_defined_types.h"
+#include "dd_checkutil.h"
+#include "dd_glflags.h"
+#include "dd_globals.h"
+#include "dd_naming.h"
+#include "dd_esb.h"                /* For flexible string buffer. */
+#include "dd_esb_using_functions.h"
+#include "dd_sanitized.h"
+#include "dd_macrocheck.h"
+#include "dd_helpertree.h"
+#include "dd_tag_common.h"
+#include "print_frames.h"  /* for print_expression_operations() . */
 
 /* Is this a PU has been invalidated by the SN Systems linker? */
 #define IsInvalidCode(low,high) \
-    ((low == max_address) || (low == 0 && high == 0))
-
+    (((low) == max_address) || ((low) == 0 && (high) == 0))
 
 /*  Most types of CU can have highpc and/or lowpc.
     DW_TAG_type_unit will not. */
@@ -197,11 +201,157 @@ get_pc_value(Dwarf_Debug dbg,
         DROP_ERROR_INSTANCE(dbg,bres,*err);
     }
 }
+
+static void
+checking_valid_code(Dwarf_Half tag,
+    Dwarf_Unsigned max_address,
+    Dwarf_Addr lowaddr,
+    Dwarf_Addr highaddr)
+{
+    if (glflags.need_PU_valid_code) {
+        glflags.need_PU_valid_code = FALSE;
+        /*  To ignore a PU as invalid code,
+            only consider the lowpc and
+            highpc values associated with the
+            DW_TAG_subprogram; other
+            instances of lowpc and highpc,
+            must be ignored (lexical blocks) */
+        glflags.in_valid_code = TRUE;
+        if (IsInvalidCode(lowaddr,highaddr) &&
+            tag == DW_TAG_subprogram) {
+            glflags.in_valid_code = FALSE;
+        }
+    }
+    /*  We have a low_pc/high_pc pair;
+        check if they are valid */
+    if (glflags.in_valid_code) {
+        DWARF_CHECK_COUNT(ranges_result,1);
+        if (lowaddr != max_address &&
+            lowaddr > highaddr ) {
+            DWARF_CHECK_ERROR(ranges_result,
+                ".debug_info: Incorrect values "
+                "for low_pc/high_pc");
+            if (glflags.gf_check_verbose_mode &&
+                PRINTING_UNIQUE) {
+                printf("Low = 0x%" DW_PR_XZEROS DW_PR_DUx
+                    ", High = 0x%"
+                    DW_PR_XZEROS DW_PR_DUx "\n",
+                    lowaddr,highaddr);
+            }
+        }
+        if (glflags.gf_check_decl_file ||
+            glflags.gf_check_ranges ||
+            glflags.gf_check_locations) {
+            AddEntryIntoBucketGroup(glflags.pRangesInfo,0,
+                lowaddr, lowaddr,highaddr,NULL,FALSE);
+        }
+    }
+}
+
+static void
+dd_check_file_etc(Dwarf_Unsigned max_address,
+    Dwarf_Debug dbg,
+    Dwarf_Die die,
+    Dwarf_Half tag,
+    LoHiPc *lohipc)
+{
+    Dwarf_Bool had_low_flag = FALSE;
+    Dwarf_Addr low_pc = 0;
+
+    if ((glflags.gf_check_decl_file ||
+    glflags.gf_check_ranges ||
+    glflags.gf_check_locations)) {
+        if (glflags.seen_PU &&
+            !glflags.seen_PU_base_address
+            && lohipc->sawlo_flag) {
+            glflags.seen_PU_base_address = TRUE;
+            glflags.PU_base_address =  lohipc->lopc;
+        }
+        if (glflags.seen_PU &&
+            !glflags.seen_PU_high_address &&
+            lohipc->havefinal_flag) {
+            glflags.seen_PU_high_address = TRUE;
+            glflags.PU_high_address = lohipc->hifinal;
+        }
+        /* We have now both low_pc and high_pc values */
+        if (lohipc->havefinal_flag && lohipc->sawlo_flag) {
+            /*  We need to decide if this PU is
+                valid, as the SN Linker marks a stripped
+                function by setting lowpc to -1;
+                also for discarded comdat, both lowpc
+                and highpc are zero */
+            Dwarf_Unsigned lowaddr = lohipc->lopc;
+            Dwarf_Unsigned highaddr = lohipc->hifinal;
+            checking_valid_code(tag,max_address,lowaddr,highaddr);
+        }
+    }
+    if (glflags.gf_check_functions) {
+        DWARF_CHECK_COUNT(check_functions_result,1);
+
+        if (lohipc->sawlo_flag) {
+            int res = 0;
+            Dwarf_Error loclerr = 0;
+
+            res = dwarf_lowpc(die,&low_pc,&loclerr);
+            if (res != DW_DLV_OK) {
+                DROP_ERROR_INSTANCE(dbg,res,loclerr);
+                DWARF_CHECK_ERROR(check_functions_result,
+                    "dwarf_lowpc failed but should not have !");
+            } else  {
+                had_low_flag = TRUE;
+                if ( low_pc != lohipc->lopc) {
+                    DWARF_CHECK_ERROR(check_functions_result,
+                        " dwarf_lowpc return did not match "
+                        "The expected dwarfdump value!");
+                }
+            }
+        }
+        if (lohipc->sawhi_flag == LOHIPC_SAWOFFSET &&
+            lohipc->havefinal_flag &&
+            had_low_flag) {
+            int res = 0;
+            Dwarf_Addr highpc = 0;
+            Dwarf_Half form = 0;
+            enum Dwarf_Form_Class formclass =DW_FORM_CLASS_UNKNOWN;
+            Dwarf_Error loclerr = 0;
+
+            res = dwarf_highpc_b(die,&highpc,
+                &form,&formclass, &loclerr);
+            if (res != DW_DLV_OK) {
+                DROP_ERROR_INSTANCE(dbg,res,loclerr);
+                DWARF_CHECK_ERROR(check_functions_result,
+                    " dwarf_highpc_b failed but should not have !");
+            } else  {
+                if (form != DW_FORM_addr &&
+                    !dwarf_addr_form_is_indexed(form)) {
+                    highpc += low_pc;
+                }
+                if ( highpc != lohipc->hifinal) {
+                    struct esb_s m;
+                    char mbuf[100];
+
+                    esb_constructor_fixed(&m,mbuf,sizeof(mbuf));
+                    esb_append_printf_u(&m,
+                        " dwarf_highpc_b return 0x%"
+                        DW_PR_XZEROS DW_PR_DUx
+                        " did not match", highpc);
+                    esb_append_printf_u(&m,
+                        " the expected dwarfdump value 0x%"
+                        DW_PR_XZEROS DW_PR_DUx " ",
+                        lohipc->hifinal);
+                    DWARF_CHECK_ERROR(check_functions_result,
+                        esb_get_string(&m));
+                    esb_destructor(&m);
+                }
+            }
+        }
+    }
+}
+
 int
 print_hipc_lopc_attribute(Dwarf_Debug dbg,
     Dwarf_Half tag,
     Dwarf_Die die,
-    int die_indent_level,
     Dwarf_Unsigned dieprint_cu_goffset,
     char ** srcfiles,
     Dwarf_Signed cnt,
@@ -225,7 +375,7 @@ print_hipc_lopc_attribute(Dwarf_Debug dbg,
     /*  Depending on the form and the attribute,
         process the form. */
     if (rv == DW_DLV_ERROR) {
-        print_error_and_continue(dbg, "in print_attribute "
+        print_error_and_continue("in print_attribute "
             "dwarf_whatform cannot"
             " Find attr form",
             rv, *err);
@@ -265,12 +415,12 @@ print_hipc_lopc_attribute(Dwarf_Debug dbg,
                 err,show_form_here);
             if (ares != DW_DLV_OK) {
                 if (ares == DW_DLV_NO_ENTRY) {
-                    print_error_and_continue(dbg,
+                    print_error_and_continue(
                         "dd_get_integer_and_name"
                         " No Entry for DW_AT_high_pc/DW_AT_low_pc",
                         ares, *err);
                 } else {
-                    print_error_and_continue(dbg,
+                    print_error_and_continue(
                         "dd_get_integer_and_name"
                         " Failed for DW_AT_high_pc/DW_AT_low_pc",
                         ares, *err);
@@ -281,7 +431,6 @@ print_hipc_lopc_attribute(Dwarf_Debug dbg,
         }
     }
     rv = get_attr_value(dbg, tag, die,
-        die_indent_level,
         dieprint_cu_goffset,
         attrib, srcfiles, cnt,
         &highpcstr,glflags.show_form_used,
@@ -305,76 +454,9 @@ print_hipc_lopc_attribute(Dwarf_Debug dbg,
         || glflags.need_CU_high_address)) {
         /* updating glflags data for checking/reporting later. */
         update_cu_base_addresses(dbg,attrib,
-            attr, tag,
-            lohipc,
-            err);
+            attr, tag, lohipc, err);
     }
-
-    if ((glflags.gf_check_decl_file ||
-        glflags.gf_check_ranges ||
-        glflags.gf_check_locations)) {
-        if (glflags.seen_PU &&
-            !glflags.seen_PU_base_address
-            && lohipc->sawlo_flag) {
-            glflags.seen_PU_base_address = TRUE;
-            glflags.PU_base_address =  lohipc->lopc;
-        }
-        if (glflags.seen_PU &&
-            !glflags.seen_PU_high_address &&
-            lohipc->havefinal_flag) {
-            glflags.seen_PU_high_address = TRUE;
-            glflags.PU_high_address = lohipc->hifinal;
-        }
-
-        /* We have now both low_pc and high_pc values */
-        if (lohipc->havefinal_flag && lohipc->sawlo_flag) {
-            /*  We need to decide if this PU is
-                valid, as the SN Linker marks a stripped
-                function by setting lowpc to -1;
-                also for discarded comdat, both lowpc
-                and highpc are zero */
-            Dwarf_Unsigned lowaddr = lohipc->lopc;
-            Dwarf_Unsigned highaddr = lohipc->hifinal;
-            if (glflags.need_PU_valid_code) {
-                glflags.need_PU_valid_code = FALSE;
-                /*  To ignore a PU as invalid code,
-                    only consider the lowpc and
-                    highpc values associated with the
-                    DW_TAG_subprogram; other
-                    instances of lowpc and highpc,
-                    must be ignored (lexical blocks) */
-                glflags.in_valid_code = TRUE;
-                if (IsInvalidCode(lowaddr,highaddr) &&
-                    tag == DW_TAG_subprogram) {
-                    glflags.in_valid_code = FALSE;
-                }
-            }
-            /*  We have a low_pc/high_pc pair;
-                check if they are valid */
-            if (glflags.in_valid_code) {
-                DWARF_CHECK_COUNT(ranges_result,1);
-                if (lowaddr != max_address &&
-                    lowaddr > highaddr ) {
-                    DWARF_CHECK_ERROR(ranges_result,
-                        ".debug_info: Incorrect values "
-                        "for low_pc/high_pc");
-                    if (glflags.gf_check_verbose_mode &&
-                        PRINTING_UNIQUE) {
-                        printf("Low = 0x%" DW_PR_XZEROS DW_PR_DUx
-                            ", High = 0x%"
-                            DW_PR_XZEROS DW_PR_DUx "\n",
-                            lowaddr,highaddr);
-                    }
-                }
-                if (glflags.gf_check_decl_file ||
-                    glflags.gf_check_ranges ||
-                    glflags.gf_check_locations) {
-                    AddEntryIntoBucketGroup(glflags.pRangesInfo,0,
-                        lowaddr, lowaddr,highaddr,NULL,FALSE);
-                }
-            }
-        }
-    }
+    dd_check_file_etc(max_address,dbg,die,tag,lohipc);
     esb_destructor(&highpcstr);
     return DW_DLV_OK;
 }

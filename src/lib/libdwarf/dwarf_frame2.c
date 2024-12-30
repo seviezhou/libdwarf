@@ -31,21 +31,32 @@
 /*  This  implements _dwarf_get_fde_list_internal()
     and related helper functions for reading cie/fde data.  */
 
-#include "config.h"
-#include <stdio.h>
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif /* HAVE_STDLIB_H */
+#include <config.h>
+
+#include <stdlib.h> /* qsort() */
+#include <stdio.h> /* printf() */
+#include <string.h> /* memcpy() memset() strcmp()
+    strncmp() strlen() */
+
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
 #ifdef HAVE_STDINT_H
-#include <stdint.h> /* for uintptr_t */
+#include <stdint.h> /* uintptr_t */
 #endif /* HAVE_STDINT_H */
-#include "dwarf_incl.h"
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_opaque.h"
 #include "dwarf_alloc.h"
 #include "dwarf_error.h"
 #include "dwarf_util.h"
 #include "dwarf_frame.h"
 #include "dwarf_arange.h" /* using Arange as a way to build a list */
-#include "dwarfstring.h"
+#include "dwarf_string.h"
 
 /*  For a little information about .eh_frame see
     https://stackoverflow.com/questions/14091231/
@@ -59,12 +70,7 @@
     tables for fast access into .eh_frame.
 */
 
-
-
-#define TRUE 1
-#define FALSE 0
-
-#if 0  /* FOR DEBUGGING */
+#if 0  /* dump_bytes FOR DEBUGGING */
 /* For debugging only. */
 static void
 dump_bytes(const char *msg,Dwarf_Small * start, long len)
@@ -80,13 +86,14 @@ dump_bytes(const char *msg,Dwarf_Small * start, long len)
 
 #endif
 
-static int dwarf_find_existing_cie_ptr(Dwarf_Small * cie_ptr,
+static int _dwarf_find_existing_cie_ptr(Dwarf_Small * cie_ptr,
     Dwarf_Cie cur_cie_ptr,
     Dwarf_Cie * cie_ptr_to_use_out,
     Dwarf_Cie head_cie_ptr);
-static void dealloc_fde_cie_list_internal(Dwarf_Fde head_fde_ptr,
+static void _dwarf_dealloc_fde_cie_list_internal(
+    Dwarf_Fde head_fde_ptr,
     Dwarf_Cie head_cie_ptr);
-static int dwarf_create_cie_from_start(Dwarf_Debug dbg,
+static int _dwarf_create_cie_from_start(Dwarf_Debug dbg,
     Dwarf_Small * cie_ptr_val,
     Dwarf_Small * section_ptr,
     Dwarf_Unsigned section_index,
@@ -98,17 +105,16 @@ static int dwarf_create_cie_from_start(Dwarf_Debug dbg,
     Dwarf_Cie * cie_ptr_to_use_out,
     Dwarf_Error * error);
 
-static int get_gcc_eh_augmentation(Dwarf_Debug dbg,
+static int _dwarf_get_gcc_eh_augmentation(Dwarf_Debug dbg,
     Dwarf_Small * frame_ptr,
-    unsigned long
-    *size_of_augmentation_data,
+    Dwarf_Unsigned *size_of_augmentation_data,
     enum Dwarf_augmentation_type augtype,
     Dwarf_Small * section_end_pointer,
     char *augmentation,
     Dwarf_Error *error);
 
 static int
-gnu_aug_encodings(Dwarf_Debug dbg, char *augmentation,
+_dwarf_gnu_aug_encodings(Dwarf_Debug dbg, char *augmentation,
     Dwarf_Small * aug_data, Dwarf_Unsigned aug_data_len,
     Dwarf_Half address_size,
     unsigned char *pers_hand_enc_out,
@@ -117,8 +123,7 @@ gnu_aug_encodings(Dwarf_Debug dbg, char *augmentation,
     Dwarf_Addr * gnu_pers_addr_out,
     Dwarf_Error *error);
 
-
-static int read_encoded_ptr(Dwarf_Debug dbg,
+static int _dwarf_read_encoded_ptr(Dwarf_Debug dbg,
     Dwarf_Small * section_pointer,
     Dwarf_Small * input_field,
     int gnu_encoding,
@@ -127,8 +132,6 @@ static int read_encoded_ptr(Dwarf_Debug dbg,
     Dwarf_Unsigned * addr,
     Dwarf_Small ** input_field_out,
     Dwarf_Error *error);
-
-
 
 /*  Called by qsort to compare FDE entries.
     Consumer code expects the array of FDE pointers to be
@@ -250,8 +253,7 @@ validate_length(Dwarf_Debug dbg,
     return;
 }
 
-
-#if 0 /* FOR DEBUGGING */
+#if 0 /* print_prefix() FOR DEBUGGING */
 /* For debugging only. */
 static void
 print_prefix(struct cie_fde_prefix_s *prefix, int line)
@@ -298,28 +300,42 @@ print_prefix(struct cie_fde_prefix_s *prefix, int line)
     ambiguous, but this calculation is correct.
 */
 
-static Dwarf_Small *
-get_cieptr_given_offset(Dwarf_Unsigned cie_id_value,
+static int
+get_cieptr_given_offset(Dwarf_Debug dbg,
+    Dwarf_Unsigned cie_id_value,
     int use_gnu_cie_calc,
     Dwarf_Small * section_ptr,
-    Dwarf_Small * cie_id_addr)
+    Dwarf_Unsigned section_length,
+    Dwarf_Small * cie_id_addr,
+    Dwarf_Small ** ret_cieptr,
+    Dwarf_Error *error)
 {
-    Dwarf_Small *cieptr = 0;
-
+    if (cie_id_value >= section_length) {
+        _dwarf_error_string(dbg, error,
+            DW_DLE_DEBUG_FRAME_LENGTH_BAD,
+            "DW_DLE_DEBUG_FRAME_LENGTH_BAD: in eh_frame "
+            " cie_id value makes no sense. Corrupt DWARF");
+        return DW_DLV_ERROR;
+    }
     if (use_gnu_cie_calc) {
         /*  cie_id value is offset, in section, of the
             cie_id itself, to
             use vm ptr of the value,
             less the value, to get to the cie header.  */
-        cieptr = cie_id_addr - cie_id_value;
+        if ((Dwarf_Unsigned)(uintptr_t)cie_id_addr <= cie_id_value) {
+            _dwarf_error_string(dbg, error,
+                DW_DLE_DEBUG_FRAME_LENGTH_BAD,
+                "DW_DLE_DEBUG_FRAME_LENGTH_BAD: in eh_frame "
+                " cie_id makes no sense. Corrupt DWARF");
+            return DW_DLV_ERROR;
+        }
+        *ret_cieptr = cie_id_addr - cie_id_value;
     } else {
         /*  Traditional dwarf section offset is in cie_id */
-        cieptr = section_ptr + cie_id_value;
+        *ret_cieptr = section_ptr + cie_id_value;
     }
-    return cieptr;
+    return DW_DLV_OK;
 }
-
-
 
 /*  Internal function called from various places to create
     lists of CIEs and FDEs.  Not directly called
@@ -339,8 +355,6 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
     Dwarf_Small *frame_ptr = section_ptr;
     Dwarf_Small *section_ptr_end = section_ptr + section_length;
 
-
-
     /*  New_cie points to the Cie being read, and head_cie_ptr and
         cur_cie_ptr are used for chaining them up in sequence.
         In case cie's are reused aggressively we need tail_cie_ptr
@@ -357,7 +371,6 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
         Dwarf_Cie structures.
     */
     Dwarf_Cie *cie_list_ptr = 0;
-
 
     /*  New_fde points to the Fde being created, and head_fde_ptr and
         cur_fde_ptr are used to chain them up. */
@@ -376,6 +389,10 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
     if (frame_ptr == 0) {
         return DW_DLV_NO_ENTRY;
     }
+    res = _dwarf_validate_register_numbers(dbg,error);
+    if (res == DW_DLV_ERROR) {
+        return res;
+    }
 
     /*  We create the fde and cie arrays.
         Processing each CIE as we come
@@ -392,12 +409,12 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
             figure out what we are
             to do with this entry. */
         memset(&prefix, 0, sizeof(prefix));
-        res = dwarf_read_cie_fde_prefix(dbg,
+        res = _dwarf_read_cie_fde_prefix(dbg,
             frame_ptr, section_ptr,
             section_index,
             section_length, &prefix, error);
         if (res == DW_DLV_ERROR) {
-            dealloc_fde_cie_list_internal(head_fde_ptr,
+            _dwarf_dealloc_fde_cie_list_internal(head_fde_ptr,
                 head_cie_ptr);
             return res;
         }
@@ -406,8 +423,8 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
         }
         frame_ptr = prefix.cf_addr_after_prefix;
         if (frame_ptr >= section_ptr_end) {
-            dealloc_fde_cie_list_internal(head_fde_ptr, head_cie_ptr);
-            _dwarf_error(dbg, error, DW_DLE_DEBUG_FRAME_LENGTH_BAD);
+            _dwarf_dealloc_fde_cie_list_internal(head_fde_ptr,
+                head_cie_ptr);
             _dwarf_error_string(dbg, error,
                 DW_DLE_DEBUG_FRAME_LENGTH_BAD,
                 "DW_DLE_DEBUG_FRAME_LENGTH_BAD: following "
@@ -422,7 +439,7 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
             Dwarf_Cie cie_ptr_to_use = 0;
             int resc = 0;
 
-            resc = dwarf_find_existing_cie_ptr(prefix.cf_start_addr,
+            resc = _dwarf_find_existing_cie_ptr(prefix.cf_start_addr,
                 cur_cie_ptr,
                 &cie_ptr_to_use,
                 head_cie_ptr);
@@ -431,7 +448,7 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
                 /* Ok. Seen already. */
             } else if (resc == DW_DLV_NO_ENTRY) {
                 /* CIE before its FDE in this case. */
-                resc = dwarf_create_cie_from_after_start(dbg,
+                resc = _dwarf_create_cie_from_after_start(dbg,
                     &prefix,
                     section_ptr,
                     frame_ptr,
@@ -441,7 +458,7 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
                     &cie_ptr_to_use,
                     error);
                 if (resc != DW_DLV_OK) {
-                    dealloc_fde_cie_list_internal(head_fde_ptr,
+                    _dwarf_dealloc_fde_cie_list_internal(head_fde_ptr,
                         head_cie_ptr);
                     return resc;
                 }
@@ -451,7 +468,7 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
                 cur_cie_ptr = tail_cie_ptr;
             } else {            /* res == DW_DLV_ERROR */
 
-                dealloc_fde_cie_list_internal(head_fde_ptr,
+                _dwarf_dealloc_fde_cie_list_internal(head_fde_ptr,
                     head_cie_ptr);
                 return resc;
             }
@@ -470,11 +487,16 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
             Dwarf_Fde fde_ptr_to_use = 0;
             Dwarf_Small *cieptr_val = 0;
 
-            cieptr_val = get_cieptr_given_offset(prefix.cf_cie_id,
+            resf = get_cieptr_given_offset(dbg,
+                prefix.cf_cie_id,
                 use_gnu_cie_calc,
                 section_ptr,
-                prefix.cf_cie_id_addr);
-            resf = dwarf_find_existing_cie_ptr(cieptr_val,
+                section_length,
+                prefix.cf_cie_id_addr,&cieptr_val,error);
+            if (resf != DW_DLV_OK) {
+                return resf;
+            }
+            resf = _dwarf_find_existing_cie_ptr(cieptr_val,
                 cur_cie_ptr,
                 &cie_ptr_to_use,
                 head_cie_ptr);
@@ -482,7 +504,7 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
                 cur_cie_ptr = cie_ptr_to_use;
                 /* Ok. Seen CIE already. */
             } else if (resf == DW_DLV_NO_ENTRY) {
-                resf = dwarf_create_cie_from_start(dbg,
+                resf = _dwarf_create_cie_from_start(dbg,
                     cieptr_val,
                     section_ptr,
                     section_index,
@@ -494,7 +516,7 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
                     &cie_ptr_to_use,
                     error);
                 if (resf == DW_DLV_ERROR) {
-                    dealloc_fde_cie_list_internal(head_fde_ptr,
+                    _dwarf_dealloc_fde_cie_list_internal(head_fde_ptr,
                         head_cie_ptr);
                     return resf;
                 } else if (resf == DW_DLV_NO_ENTRY) {
@@ -510,20 +532,23 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
                 return resf;
             }
 
-            resf = dwarf_create_fde_from_after_start(dbg,
+            resf = _dwarf_create_fde_from_after_start(dbg,
                 &prefix,
                 section_ptr,
+                section_length,
                 frame_ptr,
                 section_ptr_end,
                 use_gnu_cie_calc,
                 cie_ptr_to_use,
+                cie_ptr_to_use->ci_address_size,
                 &fde_ptr_to_use,
                 error);
             if (resf == DW_DLV_ERROR) {
-                dealloc_fde_cie_list_internal(head_fde_ptr,
+                _dwarf_dealloc_fde_cie_list_internal(head_fde_ptr,
                     head_cie_ptr);
                 return resf;
-            } else if (resf == DW_DLV_NO_ENTRY) {
+            }
+            if (resf == DW_DLV_NO_ENTRY) {
                 /* impossible. */
                 return resf;
             }
@@ -541,7 +566,7 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
                     really 4, as in DWARF{2,3} where we have
                     no FDE address_size) we emit an error.
                     This error means things will not go well. */
-                dealloc_fde_cie_list_internal(head_fde_ptr,
+                _dwarf_dealloc_fde_cie_list_internal(head_fde_ptr,
                     head_cie_ptr);
                 _dwarf_error(dbg,error,
                     DW_DLE_DEBUG_FRAME_POSSIBLE_ADDRESS_BOTCH);
@@ -557,21 +582,26 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
             _dwarf_get_alloc(dbg, DW_DLA_LIST, cie_count);
     } else {
         if (fde_count > 0) {
-            dealloc_fde_cie_list_internal(head_fde_ptr, head_cie_ptr);
+            _dwarf_dealloc_fde_cie_list_internal(head_fde_ptr,
+                head_cie_ptr);
             _dwarf_error(dbg, error, DW_DLE_ORPHAN_FDE);
             return DW_DLV_ERROR;
         }
-        dealloc_fde_cie_list_internal(head_fde_ptr, head_cie_ptr);
+        _dwarf_dealloc_fde_cie_list_internal(head_fde_ptr,
+            head_cie_ptr);
         return DW_DLV_NO_ENTRY;
     }
     if (cie_list_ptr == NULL) {
-        dealloc_fde_cie_list_internal(head_fde_ptr, head_cie_ptr);
+        _dwarf_dealloc_fde_cie_list_internal(head_fde_ptr,
+            head_cie_ptr);
         _dwarf_error(dbg, error, DW_DLE_ALLOC_FAIL);
         return DW_DLV_ERROR;
     }
     if (!head_cie_ptr) {
         /*  Should be impossible. */
-        _dwarf_error(dbg, error,DW_DLE_DEBUGFRAME_ERROR);
+        _dwarf_error_string(dbg, error,DW_DLE_DEBUGFRAME_ERROR,
+            "DW_DLE_DEBUGFRAME_ERROR"
+            "Impossible no head_cie_ptr");
         return DW_DLV_ERROR;
     }
     cur_cie_ptr = head_cie_ptr;
@@ -586,6 +616,14 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
     if (fde_count > 0) {
         fde_list_ptr = (Dwarf_Fde *)
             _dwarf_get_alloc(dbg, DW_DLA_LIST, fde_count);
+        if (!fde_list_ptr) {
+            _dwarf_dealloc_fde_cie_list_internal(head_fde_ptr,
+                head_cie_ptr);
+            _dwarf_error_string(dbg, error,DW_DLE_ALLOC_FAIL,
+                "DW_DLE_ALLOC_FAIL"
+                "getting DW_DLA_LIST given fde_count");
+            return DW_DLV_ERROR;
+        }
     }
 
     /* It is ok if fde_list_ptr is NULL, we just have no fdes. */
@@ -594,7 +632,6 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
         *(fde_list_ptr + i) = cur_fde_ptr;
         cur_fde_ptr = cur_fde_ptr->fd_next;
     }
-
 
     /* Return arguments. */
     *cie_data = cie_list_ptr;
@@ -630,7 +667,7 @@ _dwarf_get_fde_list_internal(Dwarf_Debug dbg, Dwarf_Cie ** cie_data,
     and now we consume the rest and build a Dwarf_Cie_s structure.
 */
 int
-dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
+_dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
     struct cie_fde_prefix_s *prefix,
     Dwarf_Small * section_pointer,
     Dwarf_Small * frame_ptr,
@@ -665,7 +702,6 @@ dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
     unsigned char gnu_fde_begin_encoding = 0;
     int res = 0;
     Dwarf_Small version = 0;
-
 
     enum Dwarf_augmentation_type augt = aug_unknown;
 
@@ -722,9 +758,6 @@ dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
     augt = _dwarf_get_augmentation_type(dbg,
         augmentation, use_gnu_cie_calc);
     if (augt == aug_eh) {
-        /* REFERENCED *//* Not used in this instance */
-        UNUSEDARG Dwarf_Unsigned exception_table_addr;
-
         if ((frame_ptr+local_length_size)  >= section_ptr_end) {
             _dwarf_error_string(dbg, error,
                 DW_DLE_DEBUG_FRAME_LENGTH_BAD,
@@ -733,10 +766,14 @@ dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
                 "with the CIE incomplete.  Corrupt Dwarf");
             return DW_DLV_ERROR;
         }
+#if 0 /* obsolete sgi exception table reference. Ignore. */
+        /* REFERENCED *//* Not used in this instance */
+        Dwarf_Unsigned exception_table_addr = 0;
         /* this is per egcs-1.1.2 as on RH 6.0 */
         READ_UNALIGNED_CK(dbg, exception_table_addr,
             Dwarf_Unsigned, frame_ptr, local_length_size,
             error,section_ptr_end);
+#endif
         frame_ptr += local_length_size;
     }
     {
@@ -796,8 +833,10 @@ dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
         DECODE_LEB128_UWORD_CK(frame_ptr, lreg,dbg,error,
             section_ptr_end);
         code_alignment_factor = (Dwarf_Unsigned) lreg;
-        res = (Dwarf_Signed) _dwarf_decode_s_leb128_chk(frame_ptr,
-            &leb128_length,&data_alignment_factor,section_ptr_end);
+        res = dwarf_decode_signed_leb128(
+            (char *)frame_ptr,
+            &leb128_length,&data_alignment_factor,
+            (char *)section_ptr_end);
         if (res != DW_DLV_OK) {
             return res;
         }
@@ -846,6 +885,14 @@ dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
         DECODE_LEB128_UWORD_CK(frame_ptr, lreg,
             dbg,error,section_ptr_end);
         length_of_augmented_fields = (Dwarf_Unsigned) lreg;
+        if (length_of_augmented_fields >= dbg->de_filesize) {
+            _dwarf_error_string(dbg,error,
+                DW_DLE_DEBUG_FRAME_LENGTH_BAD,
+                "DW_DLE_DEBUG_FRAME_LENGTH_BAD: "
+                "The irix exception table length is too large "
+                "to be real");
+            return DW_DLV_ERROR;
+        }
         /* set the frame_ptr to point at the instruction start. */
         frame_ptr += length_of_augmented_fields;
         }
@@ -853,7 +900,7 @@ dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
 
     case aug_eh:{
         int err = 0;
-        unsigned long increment = 0;
+        Dwarf_Unsigned increment = 0;
 
         if (!use_gnu_cie_calc) {
             /* This should be impossible. */
@@ -862,7 +909,8 @@ dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
             return DW_DLV_ERROR;
         }
 
-        err = get_gcc_eh_augmentation(dbg, frame_ptr, &increment,
+        err = _dwarf_get_gcc_eh_augmentation(dbg, frame_ptr,
+            &increment,
             augt,
             section_ptr_end,
             (char *) augmentation,error);
@@ -912,7 +960,7 @@ dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
                 return DW_DLV_ERROR;
             }
         }
-        resz = gnu_aug_encodings(dbg,
+        resz = _dwarf_gnu_aug_encodings(dbg,
             (char *) augmentation,
             cie_aug_data,
             cie_aug_data_len,
@@ -923,8 +971,12 @@ dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
             &gnu_personality_handler_addr,
             error);
         if (resz != DW_DLV_OK) {
-            _dwarf_error(dbg, error,
-                DW_DLE_FRAME_AUGMENTATION_UNKNOWN);
+            if (resz == DW_DLV_ERROR) {
+                _dwarf_error_string(dbg, error,
+                    DW_DLE_FRAME_AUGMENTATION_UNKNOWN,
+                    "DW_DLE_FRAME_AUGMENTATION_UNKNOWN "
+                    " Reading gnu aug encodings failed");
+            } /* DW_DLV_NO_ENTRY seems impossible. */
             return resz;
         }
         frame_ptr += adlen;
@@ -957,15 +1009,20 @@ dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
 
     new_cie = (Dwarf_Cie) _dwarf_get_alloc(dbg, DW_DLA_CIE, 1);
     if (new_cie == NULL) {
-        _dwarf_error(dbg, error, DW_DLE_ALLOC_FAIL);
+        _dwarf_error_string(dbg, error,
+            DW_DLE_ALLOC_FAIL,
+            "DW_DLE_ALLOC_FAIL "
+            "attempting to allocate a Dwarf_Cie");
         return DW_DLV_ERROR;
     }
 
     new_cie->ci_cie_version_number = version;
     new_cie->ci_initial_table = NULL;
     new_cie->ci_length = (Dwarf_Unsigned) prefix->cf_length;
-    new_cie->ci_length_size = prefix->cf_local_length_size;
-    new_cie->ci_extension_size = prefix->cf_local_extension_size;
+    new_cie->ci_length_size =
+        (Dwarf_Small)prefix->cf_local_length_size;
+    new_cie->ci_extension_size =
+        (Dwarf_Small)prefix->cf_local_extension_size;
     new_cie->ci_augmentation = (char *) augmentation;
 
     new_cie->ci_data_alignment_factor =
@@ -997,6 +1054,7 @@ dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
     new_cie->ci_cie_end = new_cie->ci_cie_start + new_cie->ci_length +
         new_cie->ci_length_size+ new_cie->ci_extension_size;
     if ( new_cie->ci_cie_end > section_ptr_end) {
+        dwarf_dealloc(dbg,new_cie,DW_DLA_CIE);
         _dwarf_error(dbg, error, DW_DLE_DF_FRAME_DECODING_ERROR);
         return DW_DLV_ERROR;
     }
@@ -1008,12 +1066,9 @@ dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
         new_cie->ci_length_size, new_cie->ci_extension_size,
         new_cie->ci_section_ptr,
         new_cie->ci_cie_start,"cie");
-
     *cie_ptr_out = new_cie;
     return DW_DLV_OK;
-
 }
-
 
 /*  Internal function, not called by consumer code.
     'prefix' has accumulated the info up thru the cie-id
@@ -1021,15 +1076,17 @@ dwarf_create_cie_from_after_start(Dwarf_Debug dbg,
     Can be called with cie_ptr_in NULL from dwarf_frame.c  */
 
 int
-dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
+_dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
     struct cie_fde_prefix_s *prefix,
-    Dwarf_Small * section_pointer,
-    Dwarf_Small * frame_ptr,
-    Dwarf_Small * section_ptr_end,
-    int use_gnu_cie_calc,
-    Dwarf_Cie cie_ptr_in,
-    Dwarf_Fde * fde_ptr_out,
-    Dwarf_Error * error)
+    Dwarf_Small *section_pointer,
+    Dwarf_Unsigned section_length,
+    Dwarf_Small *frame_ptr,
+    Dwarf_Small *section_ptr_end,
+    int          use_gnu_cie_calc,
+    Dwarf_Cie    cie_ptr_in,
+    Dwarf_Half   address_size,
+    Dwarf_Fde   *fde_ptr_out,
+    Dwarf_Error *error)
 {
     Dwarf_Fde new_fde = 0;
     Dwarf_Cie cieptr = 0;
@@ -1045,7 +1102,6 @@ dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
         bytes in size */
     Dwarf_Addr address_range = 0;       /* must be min de_pointer_size
         bytes in size */
-    Dwarf_Half address_size = 0;
     Dwarf_Unsigned eh_table_value = 0;
     Dwarf_Bool eh_table_value_set = FALSE;
     /* Temporary assumption.  */
@@ -1053,19 +1109,17 @@ dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
 
     if (cie_ptr_in) {
         cieptr = cie_ptr_in;
-        address_size = cieptr->ci_address_size;
         augt = cieptr->ci_augmentation_type;
     }
-
     if (augt == aug_gcc_eh_z) {
         /*  If z augmentation this is eh_frame,
             and initial_location and
             address_range in the FDE are read according to the CIE
             augmentation string instructions.  */
 
-        {
+        if (cieptr) {
             Dwarf_Small *fp_updated = 0;
-            int res = read_encoded_ptr(dbg,
+            int res = _dwarf_read_encoded_ptr(dbg,
                 section_pointer,
                 frame_ptr,
                 cieptr-> ci_gnu_fde_begin_encoding,
@@ -1084,7 +1138,7 @@ dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
                 ci_gnu_fde_begin_encoding in this
                 call would also work
                 to turn off DW_EH_PE_pcrel. */
-            res = read_encoded_ptr(dbg, (Dwarf_Small *) NULL,
+            res = _dwarf_read_encoded_ptr(dbg, (Dwarf_Small *) NULL,
                 frame_ptr,
                 cieptr->ci_gnu_fde_begin_encoding,
                 section_ptr_end,
@@ -1094,7 +1148,8 @@ dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
                 return res;
             }
             frame_ptr = fp_updated;
-        }
+        } /*  We know cieptr was set as was augt, no else needed
+            converity scan CID 323429 */
         {
             Dwarf_Unsigned adlen = 0;
 
@@ -1102,6 +1157,42 @@ dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
                 dbg,error,section_ptr_end);
             fde_aug_data_len = adlen;
             fde_aug_data = frame_ptr;
+            if (frame_ptr < section_ptr_end) {
+                Dwarf_Unsigned remaininglen = 0;
+                remaininglen = (Dwarf_Unsigned)
+                    (section_ptr_end - frame_ptr);
+                if (remaininglen <= adlen) {
+                    _dwarf_error_string(dbg, error,
+                        DW_DLE_AUG_DATA_LENGTH_BAD,
+                        "DW_DLE_AUG_DATA_LENGTH_BAD: The "
+                        "augmentation length is too large for "
+                        "the frame section, corrupt DWARF");
+                    return DW_DLV_ERROR;
+                }
+            } else {
+                _dwarf_error_string(dbg, error,
+                    DW_DLE_AUG_DATA_LENGTH_BAD,
+                    "DW_DLE_AUG_DATA_LENGTH_BAD: The "
+                    "frame pointer has stepped off the end "
+                    "of the frame section on reading augmentation "
+                    "length. Corrupt DWARF");
+                return DW_DLV_ERROR;
+            }
+            if ( adlen >= section_length) {
+                dwarfstring m;
+
+                dwarfstring_constructor(&m);
+                dwarfstring_append_printf_u(&m,
+                    "DW_DLE_AUG_DATA_LENGTH_BAD: The "
+                    "gcc .eh_frame augmentation data "
+                    "length of %" DW_PR_DUu " is too long to"
+                    " fit in the section.",adlen);
+                _dwarf_error_string(dbg, error,
+                    DW_DLE_AUG_DATA_LENGTH_BAD,
+                    dwarfstring_string(&m));
+                dwarfstring_destructor(&m);
+                return DW_DLV_ERROR;
+            }
             frame_ptr += adlen;
             if (adlen) {
                 if (frame_ptr < fde_aug_data ||
@@ -1122,7 +1213,6 @@ dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
                 }
             }
         }
-
     } else {
         if ((frame_ptr + 2*address_size) > section_ptr_end) {
             _dwarf_error(dbg,error,DW_DLE_DEBUG_FRAME_LENGTH_BAD);
@@ -1149,11 +1239,22 @@ dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
             dbg,error,section_ptr_end);
         length_of_augmented_fields = (Dwarf_Unsigned) lreg;
 
+        if (length_of_augmented_fields >= dbg->de_filesize) {
+            _dwarf_error_string(dbg, error,
+                DW_DLE_DEBUG_FRAME_LENGTH_BAD,
+                "DW_DLE_DEBUG_FRAME_LENGTH_BAD "
+                "in irix exception table length of augmented "
+                "fields is too large to be real");
+            return DW_DLV_ERROR;
+        }
         saved_frame_ptr = frame_ptr;
         /*  The first word is an offset into exception tables.
             Defined as a 32bit offset even for CC -64. */
         if ((frame_ptr + DWARF_32BIT_SIZE) > section_ptr_end) {
-            _dwarf_error(dbg,error,DW_DLE_DEBUG_FRAME_LENGTH_BAD);
+            _dwarf_error_string(dbg,error,
+                DW_DLE_DEBUG_FRAME_LENGTH_BAD,
+                "DW_DLE_DEBUG_FRAME_LENGTH_BAD "
+                "irix:frame does not fit in the DWARF section");
             return DW_DLV_ERROR;
         }
         READ_UNALIGNED_CK(dbg, offset_into_exception_tables,
@@ -1161,6 +1262,16 @@ dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
             error,section_ptr_end);
         SIGN_EXTEND(offset_into_exception_tables,
             DWARF_32BIT_SIZE);
+        if (offset_into_exception_tables > 0) {
+            if ((Dwarf_Unsigned)offset_into_exception_tables >=
+                dbg->de_filesize) {
+                _dwarf_error_string(dbg,error,
+                    DW_DLE_DEBUG_FRAME_LENGTH_BAD,
+                    "DW_DLE_DEBUG_FRAME_LENGTH_BAD "
+                    "Irix offset into exception tables");
+                return DW_DLV_ERROR;
+            }
+        } /* nobody uses irix anyway now */
         frame_ptr = saved_frame_ptr + length_of_augmented_fields;
         }
         break;
@@ -1204,9 +1315,18 @@ dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
     case aug_unknown:
         _dwarf_error(dbg, error, DW_DLE_FRAME_AUGMENTATION_UNKNOWN);
         return DW_DLV_ERROR;
+    default: break;
     }                           /* End switch on augmentation type */
     if ( frame_ptr > section_ptr_end) {
         _dwarf_error(dbg, error, DW_DLE_DF_FRAME_DECODING_ERROR);
+        return DW_DLV_ERROR;
+    }
+    if ( frame_ptr < initloc) {
+        _dwarf_error_string(dbg, error,
+            DW_DLE_DF_FRAME_DECODING_ERROR,
+            "DW_DLE_DF_FRAME_DECODING_ERROR "
+            "frame pointer decreased.Impossible. "
+            "arithmetic overflow");
         return DW_DLV_ERROR;
     }
 
@@ -1217,9 +1337,11 @@ dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
     }
 
     new_fde->fd_length = prefix->cf_length;
-    new_fde->fd_length_size = prefix->cf_local_length_size;
-    new_fde->fd_extension_size = prefix->cf_local_extension_size;
-    new_fde->fd_is_eh = use_gnu_cie_calc;
+    new_fde->fd_length_size =
+        (Dwarf_Small)prefix->cf_local_length_size;
+    new_fde->fd_extension_size =
+        (Dwarf_Small)prefix->cf_local_extension_size;
+    new_fde->fd_is_eh = (Dwarf_Small)use_gnu_cie_calc;
     new_fde->fd_cie_offset = cie_base_offset;
     if (cieptr) {
         new_fde->fd_cie_index = cieptr->ci_index;
@@ -1236,6 +1358,7 @@ dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
         prefix->cf_local_extension_size;
     if ( new_fde->fd_fde_end > section_ptr_end) {
         _dwarf_error(dbg, error, DW_DLE_DF_FRAME_DECODING_ERROR);
+        dwarf_dealloc(dbg,new_fde,DW_DLA_FDE);
         return DW_DLV_ERROR;
     }
 
@@ -1265,7 +1388,7 @@ dwarf_create_fde_from_after_start(Dwarf_Debug dbg,
 /*  Read in the common cie/fde prefix, including reading
     the cie-value which shows which this is: cie or fde.  */
 int
-dwarf_read_cie_fde_prefix(Dwarf_Debug dbg,
+_dwarf_read_cie_fde_prefix(Dwarf_Debug dbg,
     Dwarf_Small * frame_ptr_in,
     Dwarf_Small * section_ptr_in,
     Dwarf_Unsigned section_index_in,
@@ -1281,6 +1404,14 @@ dwarf_read_cie_fde_prefix(Dwarf_Debug dbg,
     Dwarf_Unsigned cie_id = 0;
     Dwarf_Small *section_end = section_ptr_in + section_length_in;
 
+    if (frame_ptr_in < section_ptr_in ||
+        frame_ptr_in >= section_end) {
+        _dwarf_error_string(dbg,error,DW_DLE_DEBUG_FRAME_LENGTH_BAD,
+            "DW_DLE_DEBUG_FRAME_LENGTH_BAD: "
+            "The frame point given _dwarf_read_cie_fde_prefix() "
+            "is invalid");
+        return DW_DLV_ERROR;
+    }
     if (section_end < (frame_ptr +4)) {
         dwarfstring m;
         Dwarf_Unsigned u =
@@ -1303,12 +1434,21 @@ dwarf_read_cie_fde_prefix(Dwarf_Debug dbg,
         frame_ptr, local_length_size,
         local_extension_size,error,
         section_length_in,section_end);
-
     if (length == 0) {
         /*  nul bytes at end of section, seen at end of egcs eh_frame
             sections (in a.out). Take this as meaning no more CIE/FDE
             data. We should be very close to end of section. */
         return DW_DLV_NO_ENTRY;
+    }
+    if (length >= dbg->de_filesize) {
+        _dwarf_error(dbg,error,DW_DLE_DEBUG_FRAME_LENGTH_BAD);
+        return DW_DLV_ERROR;
+    }
+    if (length > section_length_in ||
+        (length +local_length_size + local_extension_size) >
+        section_length_in) {
+        _dwarf_error(dbg,error,DW_DLE_DEBUG_FRAME_LENGTH_BAD);
+        return DW_DLV_ERROR;
     }
     if ((frame_ptr + local_length_size) >= section_end) {
         _dwarf_error(dbg,error,DW_DLE_DEBUG_FRAME_LENGTH_BAD);
@@ -1356,7 +1496,7 @@ dwarf_read_cie_fde_prefix(Dwarf_Debug dbg,
     This helps avoid leaks in case of errors.
 */
 static void
-dealloc_fde_cie_list_internal(Dwarf_Fde head_fde_ptr,
+_dwarf_dealloc_fde_cie_list_internal(Dwarf_Fde head_fde_ptr,
     Dwarf_Cie head_cie_ptr)
 {
     Dwarf_Fde curfde = 0;
@@ -1384,7 +1524,7 @@ dealloc_fde_cie_list_internal(Dwarf_Fde head_fde_ptr,
     GNU .eh_frame it is not a legal offset.
     'cie_ptr' is a pointer into our section, not an offset. */
 static int
-dwarf_find_existing_cie_ptr(Dwarf_Small * cie_ptr,
+_dwarf_find_existing_cie_ptr(Dwarf_Small * cie_ptr,
     Dwarf_Cie cur_cie_ptr,
     Dwarf_Cie * cie_ptr_to_use_out,
     Dwarf_Cie head_cie_ptr)
@@ -1405,7 +1545,6 @@ dwarf_find_existing_cie_ptr(Dwarf_Small * cie_ptr,
     return DW_DLV_NO_ENTRY;
 }
 
-
 /*  We have a valid cie_ptr_val that has not been
     turned into an internal Cie yet. Do so now.
     Returns DW_DLV_OK or DW_DLV_ERROR, never
@@ -1415,7 +1554,7 @@ dwarf_find_existing_cie_ptr(Dwarf_Small * cie_ptr,
     'section_length' - Length of the section, in bytes.
     'section_ptr_end'  - Points 1-past last byte of section data.  */
 static int
-dwarf_create_cie_from_start(Dwarf_Debug dbg,
+_dwarf_create_cie_from_start(Dwarf_Debug dbg,
     Dwarf_Small * cie_ptr_val,
     Dwarf_Small * section_ptr,
     Dwarf_Unsigned section_index,
@@ -1440,7 +1579,7 @@ dwarf_create_cie_from_start(Dwarf_Debug dbg,
         do with this entry. If it is not a cie *
         we are in big trouble. */
     memset(&prefix, 0, sizeof(prefix));
-    res = dwarf_read_cie_fde_prefix(dbg, frame_ptr, section_ptr,
+    res = _dwarf_read_cie_fde_prefix(dbg, frame_ptr, section_ptr,
         section_index, section_length,
         &prefix, error);
     if (res == DW_DLV_ERROR) {
@@ -1458,7 +1597,7 @@ dwarf_create_cie_from_start(Dwarf_Debug dbg,
         return DW_DLV_ERROR;
     }
     frame_ptr = prefix.cf_addr_after_prefix;
-    res = dwarf_create_cie_from_after_start(dbg,
+    res = _dwarf_create_cie_from_after_start(dbg,
         &prefix,
         section_ptr,
         frame_ptr,
@@ -1469,7 +1608,6 @@ dwarf_create_cie_from_start(Dwarf_Debug dbg,
     return res;
 
 }
-
 
 /*  This is for gnu eh frames, the 'z' case.
     We find the letter involved
@@ -1485,7 +1623,7 @@ dwarf_create_cie_from_start(Dwarf_Debug dbg,
 
 /*  It is not clear if this is entirely correct. */
 static int
-gnu_aug_encodings(Dwarf_Debug dbg, char *augmentation,
+_dwarf_gnu_aug_encodings(Dwarf_Debug dbg, char *augmentation,
     Dwarf_Small * aug_data, Dwarf_Unsigned aug_data_len,
     Dwarf_Half address_size,
     unsigned char *pers_hand_enc_out,
@@ -1532,9 +1670,12 @@ gnu_aug_encodings(Dwarf_Debug dbg, char *augmentation,
             break;
 
         case 'L':
-            if (cur_aug_p > end_aug_p) {
-                _dwarf_error(dbg, error,
-                    DW_DLE_FRAME_AUGMENTATION_UNKNOWN);
+            if (cur_aug_p >= end_aug_p) {
+                _dwarf_error_string(dbg, error,
+                    DW_DLE_FRAME_AUGMENTATION_UNKNOWN,
+                    "DW_DLE_FRAME_AUGMENTATION_UNKNOWN: "
+                    " Augmentation L runs off the end"
+                    " of augmentation bytes");
                 return DW_DLV_ERROR;
             }
             *lsda_enc_out = *(unsigned char *) cur_aug_p;
@@ -1572,7 +1713,7 @@ gnu_aug_encodings(Dwarf_Debug dbg, char *augmentation,
             }
             /*  DW_EH_PE_pcrel makes no sense here, so we turn it
                 off via a section pointer of NULL. */
-            res = read_encoded_ptr(dbg,
+            res = _dwarf_read_encoded_ptr(dbg,
                 (Dwarf_Small *) NULL,
                 cur_aug_p,
                 encoding,
@@ -1609,7 +1750,7 @@ gnu_aug_encodings(Dwarf_Debug dbg, char *augmentation,
     Push the address read back thru the *addr pointer.
     See LSB (Linux Standard Base)  exception handling documents.  */
 static int
-read_encoded_ptr(Dwarf_Debug dbg,
+_dwarf_read_encoded_ptr(Dwarf_Debug dbg,
     Dwarf_Small * section_pointer,
     Dwarf_Small * input_field,
     int gnu_encoding,
@@ -1754,19 +1895,20 @@ read_encoded_ptr(Dwarf_Debug dbg,
     For .eh_frame, gcc from 3.3 uses the z style, earlier used
     only "eh" as augmentation.  We don't yet handle
     decoding .eh_frame with the z style extensions like L P.
-    gnu_aug_encodings() does handle L P.
+    _dwarf_gnu_aug_encodings() does handle L P.
 
     These are nasty heuristics, but then that's life
     as augmentations are implementation specific.  */
 /* ARGSUSED */
 enum Dwarf_augmentation_type
-_dwarf_get_augmentation_type(UNUSEDARG Dwarf_Debug dbg,
+_dwarf_get_augmentation_type(Dwarf_Debug dbg,
     Dwarf_Small * augmentation_string,
     int is_gcc_eh_frame)
 {
     enum Dwarf_augmentation_type t = aug_unknown;
     char *ag_string = (char *) augmentation_string;
 
+    (void)dbg;
     if (!ag_string[0]) {
         /*  Empty string. We'll just guess that we know
             what this means:
@@ -1830,23 +1972,22 @@ _dwarf_get_augmentation_type(UNUSEDARG Dwarf_Debug dbg,
 */
 /* ARGSUSED */
 static int
-get_gcc_eh_augmentation(Dwarf_Debug dbg, Dwarf_Small * frame_ptr,
-    unsigned long *size_of_augmentation_data,
+_dwarf_get_gcc_eh_augmentation(Dwarf_Debug dbg,
+    Dwarf_Small * frame_ptr,
+    Dwarf_Unsigned *size_of_augmentation_data,
     enum Dwarf_augmentation_type augtype,
-    Dwarf_Small * section_ptr_end,
-    char *augmentation,
+    Dwarf_Small * section_ptr_end, char *augmentation,
     Dwarf_Error *error)
 {
     char *suffix = 0;
-    unsigned long augdata_size = 0;
+    Dwarf_Unsigned augdata_size = 0;
 
     if (augtype == aug_gcc_eh_z) {
         /* Has leading 'z'. */
-        UNUSEDARG Dwarf_Unsigned val = 0;
         Dwarf_Unsigned leb128_length = 0;
 
         /* Dwarf_Unsigned eh_value = */
-        DECODE_LEB128_UWORD_LEN_CK(frame_ptr,val,leb128_length,
+        SKIP_LEB128_LEN_CK(frame_ptr,leb128_length,
             dbg,error,section_ptr_end);
         augdata_size += leb128_length;
         suffix = augmentation + 1;
@@ -1868,7 +2009,6 @@ get_gcc_eh_augmentation(Dwarf_Debug dbg, Dwarf_Small * frame_ptr,
     return DW_DLV_OK;
 }
 
-
 /* To properly release all spaced used.
    Earlier approaches (before July 15, 2005)
    letting client do the dealloc directly left
@@ -1876,7 +2016,7 @@ get_gcc_eh_augmentation(Dwarf_Debug dbg, Dwarf_Small * frame_ptr,
    This is directly called by consumer code.
 */
 void
-dwarf_fde_cie_list_dealloc(Dwarf_Debug dbg,
+dwarf_dealloc_fde_cie_list(Dwarf_Debug dbg,
     Dwarf_Cie * cie_data,
     Dwarf_Signed cie_element_count,
     Dwarf_Fde * fde_data,

@@ -2,7 +2,7 @@
 #define DWARF_XU_INDEX_H
 /*
 
-  Copyright (C) 2014-2014 David Anderson. All Rights Reserved.
+  Copyright (C) 2014-2023 David Anderson. All Rights Reserved.
 
   This program is free software; you can redistribute it
   and/or modify it under the terms of version 2.1 of the
@@ -29,14 +29,11 @@
 
 */
 
-
-
 /*  The following is based on
     The gdb online documentation at
     https://gcc.gnu.org/wiki/DebugFissionDWP
     and the draft DWARF5 standard.
 */
-
 
 struct Dwarf_Xu_Index_Header_s {
     Dwarf_Debug      gx_dbg;

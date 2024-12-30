@@ -2,7 +2,7 @@
 #define _DWARF_ELF_PORT_H
 /*
 
-Copyright (C) 2008-2011 David Anderson. All rights reserved.
+Copyright (C) 2008-2023 David Anderson. All rights reserved.
 Portions Copyright 2008-2010 Arxan Technologies, Inc. All rights reserved.
 
   This program is free software; you can redistribute it
@@ -30,8 +30,6 @@ Portions Copyright 2008-2010 Arxan Technologies, Inc. All rights reserved.
 
 */
 
-
-
 /*  libelf) object access for the generic
     object file interface */
 
@@ -45,6 +43,5 @@ void
 dwarf_elf_object_access_finish(Dwarf_Obj_Access_Interface*  obj );
 
 /* End ELF object access for the generic object file interface */
-
 
 #endif

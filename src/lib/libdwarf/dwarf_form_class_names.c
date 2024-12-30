@@ -29,7 +29,8 @@ OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "config.h"
+#include <config.h>
+
 #include "libdwarf.h"
 
 /*  FORM_CLASS is created by libdwarf, it is
@@ -103,7 +104,7 @@ dwarf_get_FORM_CLASS_name (enum Dwarf_Form_Class fc,
     case DW_FORM_CLASS_STROFFSETSPTR:
         *s_out = "DW_FORM_CLASS_STROFFSETSPTR";
         return DW_DLV_OK;
-
+    default: break;
     }
     return DW_DLV_NO_ENTRY;
 }

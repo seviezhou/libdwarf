@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, David Anderson
+/* Copyright (c) 2019-2023, David Anderson
 All rights reserved.
 
 Redistribution and use in source and binary forms, with
@@ -35,7 +35,6 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifdef __cplusplus
 extern "C" {
 #endif /* __cplusplus */
-
 
 unsigned _dwarf_is_32bit_abs_reloc(unsigned int type,
     unsigned machine);

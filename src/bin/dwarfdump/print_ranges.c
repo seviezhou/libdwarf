@@ -1,4 +1,5 @@
 /*
+ffs
 Copyright (C) 2000-2006 Silicon Graphics, Inc.  All Rights Reserved.
 Portions Copyright 2007-2010 Sun Microsystems, Inc. All rights reserved.
 Portions Copyright 2009-2018 SN Systems Ltd. All rights reserved.
@@ -28,10 +29,22 @@ Portions Copyright 2008-2020 David Anderson. All rights reserved.
 
 */
 
-#include "globals.h"
-#include "esb.h"
-#include "esb_using_functions.h"
-#include "sanitized.h"
+#include <config.h>
+
+#include <stdlib.h> /* calloc() free() realloc() */
+#include <string.h> /* memset() */
+#include <stdio.h> /* FILE decl for dd_esb.h, printf etc */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dd_defined_types.h"
+#include "dd_checkutil.h"
+#include "dd_glflags.h"
+#include "dd_globals.h"
+#include "dd_esb.h"
+#include "dd_esb_using_functions.h"
+#include "dd_sanitized.h"
 
 static struct esb_s esb_string;
 
@@ -43,10 +56,12 @@ ranges_esb_string_destructor(void)
 /*  Because we do not know what DIE is involved, if the
     object being printed has different address sizes
     in different compilation units this will not work
-    properly: anything could happen. */
+    properly: anything could happen.
+    This applies to .debug_ranges, something only used
+    in DWARF3 and DWARF4.
+*/
 extern int
-print_ranges(Dwarf_Debug dbg,
-    UNUSEDARG Dwarf_Error *err)
+print_ranges(Dwarf_Debug dbg)
 {
     Dwarf_Unsigned off = 0;
     int group_number = 0;
@@ -68,11 +83,13 @@ print_ranges(Dwarf_Debug dbg,
         Dwarf_Ranges *rangeset = 0;
         Dwarf_Signed rangecount = 0;
         Dwarf_Unsigned bytecount = 0;
+        Dwarf_Off  actual_offset = 0;
         Dwarf_Error pr_err;
 
-        /*  We do not know what DIE is involved, we use
-            the older call here. */
-        int rres = dwarf_get_ranges(dbg,off,&rangeset,
+        int rres = dwarf_get_ranges_b(dbg,off,
+            0 /*No DIE available here, we will do
+                the best we can. */,
+            &actual_offset,&rangeset,
             &rangecount,&bytecount,&pr_err);
         if (!loopct) {
             get_true_section_name(dbg,".debug_ranges",
@@ -83,10 +100,10 @@ print_ranges(Dwarf_Debug dbg,
             char *val = 0;
             printf(" Ranges group %d:\n",group_number);
             esb_empty_string(&esb_string);
-            print_ranges_list_to_extra(dbg,off,off,
-                rangeset,rangecount,bytecount,
-                &esb_string);
-            dwarf_ranges_dealloc(dbg,rangeset,rangecount);
+            print_ranges_list_to_extra(dbg,0 /* no DIE */
+                ,off,off, rangeset,rangecount,
+                bytecount, &esb_string);
+            dwarf_dealloc_ranges(dbg,rangeset,rangecount);
             val = esb_get_string(&esb_string);
             printf("%s",sanitized(val));
             ++group_number;
@@ -104,7 +121,7 @@ print_ranges(Dwarf_Debug dbg,
             esb_append_printf_u(&m,"ERROR: at offset 0x%lx in ",off);
             esb_append_printf_s(&m,"section %s. Stopping ranges"
                 " output.",sanitized(esb_get_string(&truename)));
-            print_error_and_continue(dbg,esb_get_string(&m),
+            print_error_and_continue(esb_get_string(&m),
                 rres,pr_err);
             dwarf_dealloc(dbg,pr_err,DW_DLA_ERROR);
             pr_err = 0;
@@ -123,7 +140,6 @@ print_ranges(Dwarf_Debug dbg,
 */
 static int
 check_ranges_list(Dwarf_Debug dbg,
-    UNUSEDARG Dwarf_Off die_off,
     Dwarf_Die cu_die,
     Dwarf_Unsigned original_off,
     Dwarf_Unsigned finaloff,
@@ -173,8 +189,8 @@ check_ranges_list(Dwarf_Debug dbg,
                 IsValidInBucketGroup(glflags.pRangesInfo,hipc)) {
                 /* Valid values; do nothing */
             } else {
-                /*  At this point may be we
-                    are dealing with a
+                /*  At this point may be
+                    dealing with a
                     linkonce symbol */
                 if (IsValidInLinkonce(glflags.pLinkonceInfo,
                     glflags.PU_name,lopc,hipc)) {
@@ -193,7 +209,7 @@ check_ranges_list(Dwarf_Debug dbg,
                     if (glflags.gf_check_verbose_mode && do_print) {
                         /*  Update DIEs offset just for printing */
                         int dioff_res = dwarf_die_offsets(cu_die,
-                            &glflags.DIE_overall_offset,
+                            &glflags.DIE_section_offset,
                             &glflags.DIE_offset,err);
                         if (dioff_res != DW_DLV_OK) {
                             simple_err_return_msg_either_action(
@@ -231,7 +247,7 @@ check_ranges_list(Dwarf_Debug dbg,
         esb_constructor(&rangesstr);
 
         printf("\n");
-        print_ranges_list_to_extra(dbg,original_off,
+        print_ranges_list_to_extra(dbg,cu_die,original_off,
             finaloff,
             rangeset,rangecount,bytecount,
             &rangesstr);
@@ -274,7 +290,7 @@ static Dwarf_Unsigned range_array_count = 0;
     The space is reused by all CUs.
 */
 void
-allocate_range_array_info()
+allocate_range_array_info(void)
 {
     if (range_array == NULL) {
         /* Allocate initial range array info */
@@ -286,7 +302,7 @@ allocate_range_array_info()
 }
 
 void
-release_range_array_info()
+release_range_array_info(void)
 {
     if (range_array) {
         free(range_array);
@@ -298,7 +314,7 @@ release_range_array_info()
 
 /*  Clear out values from previous CU */
 static void
-reset_range_array_info()
+reset_range_array_info(void)
 {
     if (range_array) {
         memset((void *)range_array,0,
@@ -313,10 +329,22 @@ record_range_array_info_entry(Dwarf_Off die_off,Dwarf_Off range_off)
     /* Record a new detected range info. */
     if (range_array_count == range_array_size) {
         /* Resize range array */
-        range_array_size *= 2;
-        range_array = (Range_Array_Entry *)
+        Range_Array_Entry * nrp = 0;
+        Dwarf_Signed nsize = range_array_size*2;
+        nrp = (Range_Array_Entry *)
             realloc(range_array,
-            (range_array_size) * sizeof(Range_Array_Entry));
+            nsize * sizeof(Range_Array_Entry));
+        if (!nrp) {
+            printf("\nERROR: realloc fails building "
+                "range array entry %"
+                DW_PR_DUu ". Attempting "
+                "to continue.\n",range_array_size+1);
+            glflags.gf_count_major_errors++;
+            return;
+        }
+        range_array = nrp;
+        range_array_size = nsize;
+        nrp = 0;
     }
     /* The 'die_off' is the Global Die Offset */
     range_array[range_array_count].die_off = die_off;
@@ -326,8 +354,10 @@ record_range_array_info_entry(Dwarf_Off die_off,Dwarf_Off range_off)
 
 /*  Now that we are at the end of the CU, check the range lists */
 int
-check_range_array_info(Dwarf_Debug dbg,Dwarf_Error * err)
+check_range_array_info(Dwarf_Debug dbg,
+    Dwarf_Die cu_die_in,Dwarf_Error * err)
 {
+    Dwarf_Bool is_info = dwarf_get_die_infotypes_flag(cu_die_in);
     if (range_array && range_array_count) {
         /*  Traverse the range array and for each entry:
             Load the ranges
@@ -341,7 +371,7 @@ check_range_array_info(Dwarf_Debug dbg,Dwarf_Error * err)
 
         /*  In case of errors, the correct DIE offset should be
             displayed. At this point we are at the end of the PU */
-        Dwarf_Off DIE_overall_offset_bak = glflags.DIE_overall_offset;
+        Dwarf_Off DIE_section_offset_bak = glflags.DIE_section_offset;
 
         for (index = 0; index < range_array_count; ++index) {
             Dwarf_Ranges *rangeset = 0;
@@ -352,7 +382,7 @@ check_range_array_info(Dwarf_Debug dbg,Dwarf_Error * err)
             die_off = range_array[index].die_off;
             original_off = range_array[index].range_off;
 
-            res = dwarf_offdie(dbg,die_off,&cu_die,err);
+            res = dwarf_offdie_b(dbg,die_off,is_info,&cu_die,err);
             if (res != DW_DLV_OK) {
                 struct esb_s m;
 
@@ -373,8 +403,8 @@ check_range_array_info(Dwarf_Debug dbg,Dwarf_Error * err)
                 &finaloffset,
                 &rangeset,&rangecount,&bytecount,err);
             if (res == DW_DLV_OK) {
-                res = check_ranges_list(dbg,die_off,
-                    cu_die,original_off,finaloffset,
+                res = check_ranges_list(dbg,cu_die,
+                    original_off,finaloffset,
                     rangeset,rangecount,bytecount,err);
                 if (res != DW_DLV_OK) {
                     dwarf_dealloc(dbg,cu_die,DW_DLA_DIE);
@@ -388,7 +418,7 @@ check_range_array_info(Dwarf_Debug dbg,Dwarf_Error * err)
         reset_range_array_info();
 
         /*  Point back to the end of the PU */
-        glflags.DIE_overall_offset = DIE_overall_offset_bak;
+        glflags.DIE_section_offset = DIE_section_offset_bak;
     }
     return DW_DLV_OK;
 }

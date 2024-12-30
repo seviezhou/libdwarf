@@ -26,23 +26,24 @@
 
 */
 
-#include "config.h"
-#include <stdio.h>
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif
-#ifdef HAVE_MALLOC_H
-/* Useful include for some Windows compilers. */
-#include <malloc.h>
-#endif /* HAVE_MALLOC_H */
-#include "dwarf_incl.h"
+#include <config.h>
+
+#include <stdlib.h> /* calloc() free() */
+#include <string.h> /* memcpy() */
+
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_opaque.h"
 #include "dwarf_alloc.h"
 #include "dwarf_error.h"
 #include "dwarf_util.h"
 #include "dwarf_dsc.h"
-
-#define FALSE 0
-#define TRUE 1
 
 /*  When called with ary and *arraycount 0
     this just counts the elements found.
@@ -68,35 +69,34 @@ get_dsc_leb_entries(Dwarf_Debug dbg,
             /* Internal botch calling this static function. */
             _dwarf_error(dbg, error, DW_DLE_DISCR_ARRAY_ERROR);
             return DW_DLV_ERROR;
-        }
+        } else {}
     } else {
         if (!iarraycount) {
             /* Internal botch calling this static function. */
             _dwarf_error(dbg, error, DW_DLE_DISCR_ARRAY_ERROR);
             return DW_DLV_ERROR;
-        }
+        } else {}
     }
     if (dounsigned) {
         while (p < endp)  {
             Dwarf_Unsigned dsc = 0;
             Dwarf_Unsigned low = 0;
             Dwarf_Unsigned high = 0;
-            UNUSEDARG Dwarf_Unsigned leblen = 0;
 
             if (ary && (larraycount >= iarraycount)) {
                 _dwarf_error(dbg, error, DW_DLE_DISCR_ARRAY_ERROR);
                 return DW_DLV_ERROR;
             }
-            DECODE_LEB128_UWORD_LEN_CK(p,dsc,
-                leblen,dbg,error,endp);
+            DECODE_LEB128_UWORD_CK(p,dsc,
+                dbg,error,endp);
             if (!dsc) {
-                DECODE_LEB128_UWORD_LEN_CK(p,low,
-                    leblen, dbg,error,endp);
+                DECODE_LEB128_UWORD_CK(p,low,
+                    dbg,error,endp);
             } else {
-                DECODE_LEB128_UWORD_LEN_CK(p,low,
-                    leblen, dbg,error,endp);
-                DECODE_LEB128_UWORD_LEN_CK(p,high,
-                    leblen, dbg,error,endp);
+                DECODE_LEB128_UWORD_CK(p,low,
+                    dbg,error,endp);
+                DECODE_LEB128_UWORD_CK(p,high,
+                    dbg,error,endp);
             }
             if (ary) {
                 struct Dwarf_Dsc_Entry_s *arye =
@@ -104,7 +104,7 @@ get_dsc_leb_entries(Dwarf_Debug dbg,
 
                 /*  type reads the same as uleb and leb because
                     it is only zero or one. */
-                arye->dsc_type = dsc;
+                arye->dsc_type = (Dwarf_Half)dsc;
                 arye->dsc_low_u = low;
                 arye->dsc_high_u = high;
             }
@@ -115,8 +115,9 @@ get_dsc_leb_entries(Dwarf_Debug dbg,
             Dwarf_Signed dsc = 0;
             Dwarf_Signed low = 0;
             Dwarf_Signed high = 0;
-            UNUSEDARG Dwarf_Unsigned leblen = 0;
+            Dwarf_Unsigned leblen = 0;
 
+            (void)leblen;
             if (ary && (larraycount >= iarraycount)) {
                 _dwarf_error(dbg, error, DW_DLE_DISCR_ARRAY_ERROR);
                 return DW_DLV_ERROR;
@@ -138,7 +139,7 @@ get_dsc_leb_entries(Dwarf_Debug dbg,
 
                 /*  type reads the same as uleb and leb because
                     it is only zero or one. */
-                arye->dsc_type = (Dwarf_Unsigned)dsc;
+                arye->dsc_type = (Dwarf_Half)dsc;
                 arye->dsc_low_s = low;
                 arye->dsc_high_s = high;
             }
@@ -160,7 +161,6 @@ get_dsc_leb_entries(Dwarf_Debug dbg,
     return DW_DLV_OK;
 }
 
-
 int dwarf_discr_list(Dwarf_Debug dbg,
     Dwarf_Small    * blockpointer,
     Dwarf_Unsigned   blocklen,
@@ -175,10 +175,7 @@ int dwarf_discr_list(Dwarf_Debug dbg,
     Dwarf_Small * dscblockp = 0;
     Dwarf_Unsigned dscblocklen = 0;
 
-    if (!dbg){
-        _dwarf_error(NULL, error, DW_DLE_DBG_NULL);          \
-        return DW_DLV_ERROR;
-    }
+    CHECK_DBG(dbg,error,"dwarf_discr_list()");
     if (blocklen == 0) {
         return DW_DLV_NO_ENTRY;
     }
@@ -232,15 +229,17 @@ int dwarf_discr_list(Dwarf_Debug dbg,
     entry. Callers must know which is the appropriate
     one of the following two interfaces, though both
     will work. */
-int dwarf_discr_entry_u(Dwarf_Dsc_Head  dsh ,
+int
+dwarf_discr_entry_u(Dwarf_Dsc_Head  dsh ,
     Dwarf_Unsigned   entrynum,
     Dwarf_Half     * out_type,
     Dwarf_Unsigned * out_discr_low,
     Dwarf_Unsigned * out_discr_high,
-    UNUSEDARG Dwarf_Error    * error)
+    Dwarf_Error    * error)
 {
     struct Dwarf_Dsc_Entry_s *dse = 0;
 
+    (void)error;
     if (entrynum >= dsh->dsh_count) {
         return DW_DLV_NO_ENTRY;
     }
@@ -274,15 +273,17 @@ int dwarf_discr_entry_u(Dwarf_Dsc_Head  dsh ,
 
 /*  NEW September 2016. Allows easy access to DW_AT_discr_list
     entry. */
-int dwarf_discr_entry_s(Dwarf_Dsc_Head  dsh,
+int
+dwarf_discr_entry_s(Dwarf_Dsc_Head  dsh,
     Dwarf_Unsigned   entrynum,
     Dwarf_Half     * out_type,
     Dwarf_Signed   * out_discr_low,
     Dwarf_Signed   * out_discr_high,
-    UNUSEDARG Dwarf_Error    * error)
+    Dwarf_Error    * error)
 {
     struct Dwarf_Dsc_Entry_s *dse = 0;
 
+    (void)error;
     if (entrynum >= dsh->dsh_count) {
         return DW_DLV_NO_ENTRY;
     }

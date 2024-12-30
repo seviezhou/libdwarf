@@ -1,7 +1,7 @@
 /*
 
 Copyright (C) 2000,2005 Silicon Graphics, Inc.  All Rights Reserved.
-Portions Copyright (C) 2008-2012  David Anderson. All Rights Reserved.
+Portions Copyright (C) 2008-2023  David Anderson. All Rights Reserved.
 
   This program is free software; you can redistribute it
   and/or modify it under the terms of version 2.1 of the
@@ -28,8 +28,15 @@ Portions Copyright (C) 2008-2012  David Anderson. All Rights Reserved.
 
 */
 
-#define true                    1
-#define false                   0
+#ifndef DWARF_BASE_TYPES_H
+#define DWARF_BASE_TYPES_H
+
+#ifndef TRUE
+#define TRUE 1
+#endif
+#ifndef FALSE
+#define FALSE 0
+#endif
 
 /* .debug_addr new in DWARF5 */
 #define DW_ADDR_VERSION5   5
@@ -62,13 +69,12 @@ Portions Copyright (C) 2008-2012  David Anderson. All Rights Reserved.
 
 /* .debug_line_str (and .dwo) new in DWARF5. */
 #define DW_LINE_STR_VERSION5   5
-#define EXPERIMENTAL_LINE_TABLES_VERSION  0xf006\
-    /* Experimental two-level line tables */
+
+/* Experimental two-level line tables */
+#define EXPERIMENTAL_LINE_TABLES_VERSION  0xf006
 
 /* .debug_loc (and .dwo) First header version number is  DWARF5. */
 #define DW_LOC_VERSION5   5
-
-
 
 /* .debug_names new in DWARF5. */
 #define DW_NAMES_VERSION5   5
@@ -81,7 +87,6 @@ Portions Copyright (C) 2008-2012  David Anderson. All Rights Reserved.
 /* .debug_ranges gets a version number in header in DWARF5. */
 #define DW_RANGES_VERSION5 5
 
-
 /* .debug_str_offsets (and .dwo) new in DWARF5. */
 #define DW_STR_OFFSETS_VERSION5   5
 #define DW_STR_OFFSETS_VERSION4   4 /* GNU extension in DW4 */
@@ -93,10 +98,6 @@ Portions Copyright (C) 2008-2012  David Anderson. All Rights Reserved.
 #define DW_CU_INDEX_VERSION5 5
 /* .debug_tu_index new in DWARF5. */
 #define DW_TU_INDEX_VERSION5 5
-
-
-
-
 
 /*  These are allocation type codes for structs that
     are internal to the Libdwarf Consumer library.  */
@@ -123,20 +124,18 @@ Portions Copyright (C) 2008-2012  David Anderson. All Rights Reserved.
     Only used with malloc_check.c and that is basically obsolete. */
 #define MAX_DW_DLA  0x3a
 
-typedef signed char Dwarf_Sbyte;
+typedef signed char   Dwarf_Sbyte;
 typedef unsigned char Dwarf_Ubyte;
-typedef signed short Dwarf_Shalf;
-typedef Dwarf_Small *Dwarf_Byte_Ptr;
+typedef signed short  Dwarf_Shalf;
+typedef Dwarf_Small  *Dwarf_Byte_Ptr;
 
-#define DWARF_HALF_SIZE 2
+#define DWARF_HALF_SIZE  2
 #define DWARF_32BIT_SIZE 4
 #define DWARF_64BIT_SIZE 8
 
 typedef struct Dwarf_Abbrev_List_s *Dwarf_Abbrev_List;
-typedef struct Dwarf_File_Entry_s *Dwarf_File_Entry;
-typedef struct Dwarf_CU_Context_s *Dwarf_CU_Context;
-typedef struct Dwarf_Hash_Table_s *Dwarf_Hash_Table;
-typedef struct Dwarf_Hash_Table_Entry_s *Dwarf_Hash_Table_Entry;
-
-
-typedef struct Dwarf_Alloc_Hdr_s *Dwarf_Alloc_Hdr;
+typedef struct Dwarf_File_Entry_s  *Dwarf_File_Entry;
+typedef struct Dwarf_CU_Context_s  *Dwarf_CU_Context;
+typedef struct Dwarf_Hash_Table_s  *Dwarf_Hash_Table;
+typedef struct Dwarf_Alloc_Hdr_s   *Dwarf_Alloc_Hdr;
+#endif /* DWARF_BASE_TYPES_H */

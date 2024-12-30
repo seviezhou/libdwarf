@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2010-2020 David Anderson. All Rights Reserved.
+  Copyright (C) 2010-2022 David Anderson. All Rights Reserved.
   Portions Copyright 2012 SN Systems Ltd. All rights reserved.
 
   This program is free software; you can redistribute it
@@ -51,31 +51,45 @@
     slot unused (at least).   So a user request for
     N slots really gives the user N usable slots.  */
 
+#include <config.h>
 
+#include <stddef.h>  /* size_t */
+#include <stdlib.h>  /* free() malloc() */
+#include <string.h>  /* memcpy() strcpy() strlen() */
 
-#include "config.h"
-#include "dwarf_incl.h"
-#include <stdio.h>
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif /* HAVE_STDLIB_H */
-#ifdef HAVE_MALLOC_H
-/* Useful include for some Windows compilers. */
-#include <malloc.h>
-#endif /* HAVE_MALLOC_H */
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_safe_strcpy.h"
+#include "dwarf_opaque.h"
+#include "dwarf_util.h"
 #include "dwarf_frame.h"
 #include "dwarf_harmless.h"
 
+/*  Not user configurable. */
+#define DW_HARMLESS_ERROR_MSG_STRING_SIZE 300
 
 /*  The pointers returned here through errmsg_ptrs_array
     become invalidated by any call to libdwarf. Any call.
 */
-int dwarf_get_harmless_error_list(Dwarf_Debug dbg,
+int
+dwarf_get_harmless_error_list(Dwarf_Debug dbg,
     unsigned  count,
     const char ** errmsg_ptrs_array,
     unsigned * errs_count)
 {
-    struct Dwarf_Harmless_s *dhp = &dbg->de_harmless_errors;
+
+    struct Dwarf_Harmless_s *dhp = 0;
+
+    if (IS_INVALID_DBG(dbg)) {
+        return DW_DLV_NO_ENTRY;
+    }
+    dhp = &dbg->de_harmless_errors;
     if (!dhp->dh_errors) {
         dhp->dh_errs_count = 0;
         return DW_DLV_NO_ENTRY;
@@ -94,13 +108,13 @@ int dwarf_get_harmless_error_list(Dwarf_Debug dbg,
         if (dhp->dh_next_to_use != dhp->dh_first) {
             unsigned i = 0;
             unsigned cur = dhp->dh_first;
-            for (i = 0;  cur != dhp->dh_next_to_use; ++i) {
+            for (i = 0;  cur != dhp->dh_next_to_use;
+                ++i, cur = (cur +1) % dhp->dh_maxcount) {
                 if (i >= count ) {
                     /* All output spaces are used. */
                     break;
                 }
                 errmsg_ptrs_array[i] = dhp->dh_errors[cur];
-                cur = (cur +1) % dhp->dh_maxcount;
             }
             errmsg_ptrs_array[i] = 0;
         }
@@ -111,35 +125,32 @@ int dwarf_get_harmless_error_list(Dwarf_Debug dbg,
     return DW_DLV_OK;
 }
 
-/*  strncpy does not null-terminate, this does it. */
-static void
-safe_strncpy(char *targ, char *src, unsigned spaceavail)
-{
-    unsigned goodcount = spaceavail-1;
-    if (spaceavail < 1) {
-        return; /* impossible */
-    }
-    strncpy(targ,src,goodcount);
-    targ[goodcount] = 0;
-}
-
 /*  Insertion made public is only for testing the harmless error code,
     it is not necessarily useful for libdwarf client code aside
     from code testing libdwarf. */
-void dwarf_insert_harmless_error(Dwarf_Debug dbg,
+void
+dwarf_insert_harmless_error(Dwarf_Debug dbg,
     char *newerror)
 {
-    struct Dwarf_Harmless_s *dhp = &dbg->de_harmless_errors;
+    struct Dwarf_Harmless_s *dhp = 0;
     unsigned next = 0;
-    unsigned cur = dhp->dh_next_to_use;
-    char *msgspace;
+    unsigned cur = 0;
+    char *msgspace = 0;
+
+    if (IS_INVALID_DBG(dbg)) {
+        return;
+    }
+    dhp = &dbg->de_harmless_errors;
+    cur = dhp->dh_next_to_use;
     if (!dhp->dh_errors) {
         dhp->dh_errs_count++;
         return;
     }
     msgspace = dhp->dh_errors[cur];
-    safe_strncpy(msgspace, newerror,
-        DW_HARMLESS_ERROR_MSG_STRING_SIZE);
+    _dwarf_safe_strcpy(msgspace,
+        DW_HARMLESS_ERROR_MSG_STRING_SIZE,
+        newerror,
+        strlen(newerror));
     next = (cur+1) % dhp->dh_maxcount;
     dhp->dh_errs_count++;
     dhp->dh_next_to_use = next;
@@ -159,11 +170,18 @@ void dwarf_insert_harmless_error(Dwarf_Debug dbg,
     Remember the maxcount we record is 1 > the user count,
     so we adjust it so it looks like the user count.
 */
-unsigned dwarf_set_harmless_error_list_size(Dwarf_Debug dbg,
+unsigned
+dwarf_set_harmless_error_list_size(Dwarf_Debug dbg,
     unsigned maxcount )
 {
-    struct Dwarf_Harmless_s *dhp = &dbg->de_harmless_errors;
-    unsigned prevcount = dhp->dh_maxcount;
+    struct Dwarf_Harmless_s *dhp = 0;
+    unsigned prevcount = 0;
+
+    if (IS_INVALID_DBG(dbg)) {
+        return 0;
+    }
+    dhp = &dbg->de_harmless_errors;
+    prevcount = dhp->dh_maxcount;
     if (maxcount != 0) {
         ++maxcount;
         if (maxcount != dhp->dh_maxcount) {
@@ -172,7 +190,7 @@ unsigned dwarf_set_harmless_error_list_size(Dwarf_Debug dbg,
             struct Dwarf_Harmless_s oldarray = *dhp;
             /*  Do not double increment the max, the init() func
                 increments it too. */
-            dwarf_harmless_init(dhp,maxcount-1);
+            _dwarf_harmless_init(dhp,maxcount-1);
             if (oldarray.dh_next_to_use != oldarray.dh_first) {
                 unsigned i = 0;
                 for (i = oldarray.dh_first;
@@ -185,7 +203,7 @@ unsigned dwarf_set_harmless_error_list_size(Dwarf_Debug dbg,
                     dhp->dh_errs_count = oldarray.dh_errs_count;
                 }
             }
-            dwarf_harmless_cleanout(&oldarray);
+            _dwarf_harmless_cleanout(&oldarray);
         }
     }
     return prevcount-1;
@@ -194,35 +212,39 @@ unsigned dwarf_set_harmless_error_list_size(Dwarf_Debug dbg,
 /*  Only callable from within libdwarf (as a practical matter)
 */
 void
-dwarf_harmless_init(struct Dwarf_Harmless_s *dhp,unsigned size)
+_dwarf_harmless_init(struct Dwarf_Harmless_s *dhp,unsigned size)
 {
     unsigned i = 0;
     memset(dhp,0,sizeof(*dhp));
     dhp->dh_maxcount = size +1;
-    dhp->dh_errors = (char **)malloc(sizeof(char *)*dhp->dh_maxcount);
+    dhp->dh_errors = (char **)calloc(dhp->dh_maxcount,
+        sizeof(char *));
     if (!dhp->dh_errors) {
         dhp->dh_maxcount = 0;
         return;
     }
-
     for (i = 0; i < dhp->dh_maxcount; ++i) {
         char *newstr =
-            (char *)malloc(DW_HARMLESS_ERROR_MSG_STRING_SIZE);
+            (char *)calloc(1, DW_HARMLESS_ERROR_MSG_STRING_SIZE);
         dhp->dh_errors[i] = newstr;
+#if 0 /* Commentary about avoiding leak */
+        /*  BAD IDEA. just use the NULL pointer,
+            so we avoid problems later with
+            freeing.  */
         if (!newstr) {
             dhp->dh_maxcount = 0;
             /* Let it leak, the leak is a constrained amount. */
+            free(dhp->dh_errors);
             dhp->dh_errors = 0;
             return;
         }
-        /*  We make the string content well-defined by an initial
-            NUL byte, but this is not really necessary. */
-        newstr[0] = 0;
+#endif /* 0 */
+        dhp->dh_errors[i] = newstr;
     }
 }
 
 void
-dwarf_harmless_cleanout(struct Dwarf_Harmless_s *dhp)
+_dwarf_harmless_cleanout(struct Dwarf_Harmless_s *dhp)
 {
     unsigned i = 0;
     if (!dhp->dh_errors) {

@@ -28,20 +28,23 @@
 
 */
 
-#include "config.h"
-#include <stdio.h>
-#ifdef HAVE_SYS_STAT_H
-#include <sys/stat.h>
-#endif /* HAVE_SYS_STAT_H */
-#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h> /* open(), off_t, size_t, ssize_t */
-#endif /* HAVE_SYS_TYPES_H */
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif /* HAVE_STDLIB_H */
-#include "dwarf_incl.h"
+#include <config.h>
+
+#include <stdio.h>  /* stderr fflush() fprintf() */
+#include <stdlib.h> /* calloc() */
+
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_opaque.h"
+#include "dwarf_util.h"
 #include "dwarf_alloc.h"
-#include "dwarfstring.h"
+#include "dwarf_string.h"
 #include "dwarf_error.h"
 
 #undef DEBUG
@@ -65,10 +68,9 @@
     for long so this singleton is only going to cause
     confusion when callers try to save an out-of-memory
     Dwarf_Error pointer.
-    The _dwarf_failsafe_error is intended to
-    be an improvement over an abort() call.
-    The failsafe means we will not abort due to
-    a Dwarf_Error struct creation.
+    If the call provides no way to handle the error
+    the function simply returns, whereas it used
+    (before July 2021) to abort in that case.
 */
 
 /*  The user provides an explanatory string, the error
@@ -83,7 +85,8 @@ dwarf_error_creation(Dwarf_Debug dbg,
     char *errmsg)
 {
     dwarfstring m;
-    if (!dbg) {
+
+    if (IS_INVALID_DBG(dbg)) {
         return;
     }
     dwarfstring_constructor(&m);
@@ -95,6 +98,11 @@ dwarf_error_creation(Dwarf_Debug dbg,
     dwarfstring_destructor(&m);
 }
 
+/*  In rare cases (bad object files) an error is created
+    via malloc with no dbg to attach it to.
+    We record a few of those and dealloc and flush
+    on any dwarf_finish()
+    We do not expect this except on corrupt objects. */
 
 void
 _dwarf_error(Dwarf_Debug dbg, Dwarf_Error * error,
@@ -102,21 +110,29 @@ _dwarf_error(Dwarf_Debug dbg, Dwarf_Error * error,
 {
     _dwarf_error_string(dbg,error,errval,0);
 }
+
+/*  Errors are all added to the de_primary_dbg, never to
+    de_secondary_dbg. */
 void
 _dwarf_error_string(Dwarf_Debug dbg, Dwarf_Error * error,
     Dwarf_Signed errval,char *msg)
 {
-    Dwarf_Error errptr;
+    Dwarf_Error errptr = 0;
 
     /*  Allow NULL dbg on entry, since sometimes that
         can happen and we want to report the upper-level
-        error, not this one. */
+        error, not the null dbg error. */
     if (error) {
         /*  If dbg is NULL, use the alternate error struct. However,
             this will overwrite the earlier error. */
         if (dbg) {
+            /*  ERRORs are always associated with
+                de_primary_dbg so they can be returned
+                up the tree of calls on the stack
+                safely.  */
             errptr =
-                (Dwarf_Error) _dwarf_get_alloc(dbg, DW_DLA_ERROR, 1);
+                (Dwarf_Error) _dwarf_get_alloc(dbg->de_errors_dbg,
+                    DW_DLA_ERROR, 1);
             if (!errptr) {
                 errptr = &_dwarf_failsafe_error;
                 errptr->er_static_alloc = DE_STATIC;
@@ -132,34 +148,36 @@ _dwarf_error_string(Dwarf_Debug dbg, Dwarf_Error * error,
                 errptr = &_dwarf_failsafe_error;
                 errptr->er_static_alloc = DE_STATIC;
 #ifdef DEBUG
-                printf("libdwarfdetector no dbg, "
+                printf("libdwarf no dbg to dwarf_error_string,"
+                    " fullystatic, "
                     "using DE_STATIC alloc, addr"
                     " 0x%lx line %d %s\n",
                     (unsigned long)errptr,
                     __LINE__,__FILE__);
 #endif /* DEBUG */
-
-
             } else {
                 errptr->er_static_alloc = DE_MALLOC;
+
 #ifdef DEBUG
-                printf("libdwarfdetector no dbg, "
+                printf("libdwarf no dbg, add to static_err_list "
                     "static DE_MALLOC alloc, addr"
                     " 0x%lx line %d %s\n",
                     (unsigned long)errptr,
                     __LINE__,__FILE__);
 #endif /* DEBUG */
+                _dwarf_add_to_static_err_list(errptr);
             }
         }
+
         errptr->er_errval = errval;
-        if (msg) {
+        if (msg && errptr->er_static_alloc != DE_STATIC) {
             dwarfstring *em = 0;
 
 #ifdef DEBUG
-            printf("libdwarfdetector ALLOC creating error string"
+            printf("libdwarf ALLOC creating error string"
                 " %s errval %ld errptr 0x%lx \n",
                 msg,(long)errval,(unsigned long)errptr);
-#endif
+#endif /* DEBUG */
             em = (dwarfstring *)calloc(1,sizeof(dwarfstring));
             if (em) {
                 dwarfstring_constructor(em);
@@ -172,23 +190,24 @@ _dwarf_error_string(Dwarf_Debug dbg, Dwarf_Error * error,
     }
 
     if (dbg  && dbg->de_errhand != NULL) {
-        errptr = (Dwarf_Error) _dwarf_get_alloc(dbg, DW_DLA_ERROR, 1);
+        errptr = (Dwarf_Error) _dwarf_get_alloc(dbg->de_errors_dbg,
+            DW_DLA_ERROR, 1);
         if (errptr == NULL) {
             errptr = &_dwarf_failsafe_error;
             errptr->er_static_alloc = DE_STATIC;
         }
         errptr->er_errval = errval;
-        dbg->de_errhand(errptr, dbg->de_errarg);
+        dbg->de_errhand(errptr, dbg->de_errors_dbg->de_errarg);
         return;
     }
-    fflush(stdout);
-    fprintf(stdout,
-        "\nNow abort() in libdwarf. "
-        "No error argument or handler available.\n");
-    fflush(stdout);
-    abort();
+    fflush(stderr);
+    fprintf(stderr,
+        "\nlibdwarf is unable to record error %s "
+        "No error argument or handler available\n",
+        dwarf_errmsg_by_number(errval));
+    fflush(stderr);
+    return;
 }
-
 
 Dwarf_Unsigned
 dwarf_errno(Dwarf_Error error)
@@ -202,13 +221,11 @@ dwarf_errno(Dwarf_Error error)
 char*
 dwarf_errmsg_by_number(Dwarf_Unsigned errornum )
 {
-    if (errornum >=
-        (Dwarf_Signed)(sizeof(_dwarf_errmsgs) / sizeof(char *))) {
+    if (errornum > DW_DLE_LAST) {
         return "Dwarf_Error value out of range";
     }
-    return ((char *) _dwarf_errmsgs[errornum]);
+    return ((char *) &_dwarf_errmsgs[errornum][0]);
 }
-
 
 /*
 */

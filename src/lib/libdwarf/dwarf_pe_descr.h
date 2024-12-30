@@ -1,7 +1,7 @@
 #ifndef DWARF_PE_DESCR_H
 #define DWARF_PE_DESCR_H
 /*
-Copyright (c) 2018, David Anderson All rights reserved.
+Copyright (c) 2018-2023, David Anderson All rights reserved.
 
 Redistribution and use in source and binary forms, with
 or without modification, are permitted provided that the
@@ -40,9 +40,8 @@ extern "C" {
 #define IMAGE_NT_SIGNATURE_dw     0x00004550
 
 #ifndef TYP
-#define TYP(n,l) char n[l]
+#define TYP(n,l) char (n)[(l)]
 #endif /* TYPE */
-
 
 /*  Data types
     see https://msdn.microsoft.com/en-us/library/\
@@ -183,7 +182,6 @@ typedef struct
     IMAGE_OPTIONAL_HEADER32_dw OptionalHeader;
 } IMAGE_NT_HEADERS32_dw, *PIMAGE_NT_HEADERS32_dw;
 
-
 /*  IMAGE_SECTION_HEADER_dw
     see:
     https://msdn.microsoft.com/en-us/library/windows/\
@@ -255,6 +253,5 @@ typedef struct
 #ifdef __cplusplus
 }
 #endif /* __cplusplus */
-
 
 #endif /* DWARF_PE_DESCR_H */

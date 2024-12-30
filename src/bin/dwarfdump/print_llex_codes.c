@@ -29,22 +29,27 @@ Portions Copyright 2007-2020 David Anderson. All rights reserved.
 
 /* SGI has moved from the Crittenden Lane address.  */
 
+#include <config.h>
+#include <stdio.h> /* FILE decl for dd_esb.h, printf etc */
 
-#include "globals.h"
-#ifdef HAVE_STDINT_H
-#include <stdint.h> /* For uintptr_t */
-#endif /* HAVE_STDINT_H */
-#include "naming.h"
-#include "esb.h"                /* For flexible string buffer. */
-#include "esb_using_functions.h"
-#include "sanitized.h"
-#include "helpertree.h"
-#include "tag_common.h"
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dd_defined_types.h"
+#include "dd_checkutil.h"
+#include "dd_glflags.h"
+#include "dd_globals.h"
+#include "dd_naming.h"
+#include "dd_esb.h"                /* For flexible string buffer. */
+#include "dd_esb_using_functions.h"
+#include "dd_sanitized.h"
+#include "dd_helpertree.h"
+#include "dd_tag_common.h"
 
-/* Prints locentry descriptsions for DW_LKIND_GNU_exp_list */
+/* Prints locentry descriptions for DW_LKIND_GNU_exp_list */
 
 int
-print_llex_linecodes( Dwarf_Debug dbg,
+print_llex_linecodes(
     Dwarf_Bool    checking,
     const char *  tagname,
     const char *  attrname,
@@ -211,8 +216,7 @@ print_llex_linecodes( Dwarf_Debug dbg,
         esb_append_printf_u(&unexp,
             "ERROR: Unexpected LLEX code 0x%x",
             lle_value);
-        print_error_and_continue(dbg,
-            esb_get_string(&unexp),
+        print_error_and_continue(esb_get_string(&unexp),
             DW_DLV_OK, 0);
         esb_destructor(&unexp);
         *bError = TRUE;

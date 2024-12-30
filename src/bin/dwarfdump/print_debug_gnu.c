@@ -30,18 +30,23 @@ Copyright (C) 2020 David Anderson. All Rights Reserved.
 */
 
 /*  To print .debug_gnu_pubnames, .debug_gnu_typenames */
-#include "globals.h"
-#ifdef HAVE_STDINT_H
-#include <stdint.h> /* For uintptr_t */
-#endif /* HAVE_STDINT_H */
-#include "naming.h"
-#include "esb.h"                /* For flexible string buffer. */
-#include "esb_using_functions.h"
-#include "sanitized.h"
-#include  "print_debug_gnu.h"
 
-#define TRUE 1
-#define FALSE 0
+#include <config.h>
+#include <stdio.h> /* FILE decl for dd_esb.h */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dd_defined_types.h"
+#include "dd_checkutil.h"
+#include "dd_glflags.h"
+#include "dd_globals.h"
+#include "dd_naming.h"
+#include "dd_esb.h"                /* For flexible string buffer. */
+#include "dd_esb_using_functions.h"
+#include "dd_sanitized.h"
+#include "print_debug_gnu.h"
+#include "print_sections.h"
 
 char *ikind_types[8] = {
     "none",
@@ -53,20 +58,19 @@ char *ikind_types[8] = {
     "unknown6",
     "unknown7" };
 
+static int printed_infosize_error_a = FALSE;
+static int printed_infosize_error_b = FALSE;
 
 static int
 print_block_entries(
-    UNUSEDARG Dwarf_Debug dbg,
-    UNUSEDARG Dwarf_Bool for_pubnames,
-    UNUSEDARG struct esb_s * secname,
     Dwarf_Gnu_Index_Head head,
     Dwarf_Unsigned blocknum,
     Dwarf_Unsigned entrycount,
+    Dwarf_Unsigned max_offset,
     Dwarf_Error *error)
 {
     Dwarf_Unsigned i = 0;
     int res = 0;
-
 
     printf("    [   ] offset     Kind        Name\n");
 
@@ -101,6 +105,19 @@ print_block_entries(
         }
         printf("    [%3" DW_PR_DUu "] 0x%" DW_PR_XZEROS DW_PR_DUx,
             i,offset_in_debug_info);
+        if (!printed_infosize_error_a &&
+            offset_in_debug_info >= max_offset) {
+            printed_infosize_error_a = TRUE;
+            printf("  ERROR: Block %" DW_PR_DUu
+                " entry %" DW_PR_DUu
+                " debug_info offset 0x%" DW_PR_DUx
+                " is greater than the debug_info section size"
+                " of 0x%" DW_PR_DUx
+                ", something is wrong. (message will not repeat)\n",
+                blocknum,
+                i,offset_in_debug_info,max_offset);
+            glflags.gf_count_major_errors++;
+        }
         printf(" %s,%-8s",
             staticorglobal?"s":"g",
             ikind_types[0x7 & typeofentry]);
@@ -179,7 +196,7 @@ print_selected_attributes(Dwarf_Debug dbg,
         /* ok, this attribute is present */
         atname = get_AT_name(attrid,FALSE);
         res = dwarf_whatform(attr,&form,error);
-        if (res != DW_DLV_OK) {
+        if (res == DW_DLV_ERROR) {
             error_report(res,"dwarf_whatform() problem: ",error);
             dwarf_dealloc_error(dbg,*error);
             dwarf_dealloc_attribute(attr);
@@ -258,11 +275,9 @@ print_selected_attributes(Dwarf_Debug dbg,
     }
 }
 
-
 static int
 print_die_basics(Dwarf_Debug dbg,
     Dwarf_Die die,
-    UNUSEDARG Dwarf_Unsigned cudie_goff,
     Dwarf_Error *error)
 {
     int res = 0;
@@ -348,16 +363,73 @@ print_die_basics(Dwarf_Debug dbg,
     return DW_DLV_OK;
 }
 
+/*  max_offset can be zero if no .debug_info
+    section present. */
+static void
+note_info_errors(Dwarf_Unsigned i,
+    Dwarf_Unsigned max_offset,
+    Dwarf_Unsigned offset_into_debug_info,
+    Dwarf_Unsigned size_of_debug_info_area)
+{
+    if (printed_infosize_error_b) {
+        return;
+    }
+    if (size_of_debug_info_area > max_offset) {
+        printf("  ERROR: Block %" DW_PR_DUu
+            " required size of .debug_info"
+            " is %" DW_PR_DUu
+            " (0x%" DW_PR_DUx ")"
+            " which is greater than the size of "
+            ".debug_info of %" DW_PR_DUu
+            " bytes (message will not repeat)\n",
+            i,
+            size_of_debug_info_area,size_of_debug_info_area,
+            max_offset);
+        printed_infosize_error_b = TRUE;
+        glflags.gf_count_major_errors++;
+        return;
+    }
+    if (offset_into_debug_info >= max_offset) {
+        printf("  ERROR: Block %" DW_PR_DUu
+            " required offset into .debug_info"
+            " is %" DW_PR_DUu
+            " (0x%" DW_PR_DUx ")"
+            " which is greater than the size of "
+            ".debug_info of %" DW_PR_DUu
+            " bytes (message will not repeat)\n",
+            i,offset_into_debug_info,
+            offset_into_debug_info,
+            max_offset);
+        printed_infosize_error_b = TRUE;
+        glflags.gf_count_major_errors++;
+        return;
+    }
+    if ((size_of_debug_info_area+offset_into_debug_info)
+        > max_offset) {
+        printf("  ERROR: Block %" DW_PR_DUu
+            " required offset+size into .debug_info"
+            " is %" DW_PR_DUu
+            " which is greater than the size of "
+            ".debug_info of %" DW_PR_DUu
+            " bytes (message will not repeat)\n",
+            i,offset_into_debug_info+size_of_debug_info_area,
+            max_offset);
+        printed_infosize_error_b = TRUE;
+        glflags.gf_count_major_errors++;
+        return;
+    }
+}
+
 static int
 print_all_blocks(Dwarf_Debug dbg,
-    Dwarf_Bool           for_pubnames,
-    struct esb_s        *secname,
     Dwarf_Gnu_Index_Head head,
     Dwarf_Unsigned       block_count,
     Dwarf_Error         *error)
 {
     Dwarf_Unsigned i = 0;
     int res = 0;
+
+    Dwarf_Unsigned max_offset = get_info_max_offset(dbg);
 
     for ( ; i < block_count; ++i) {
         Dwarf_Unsigned block_length            = 0;
@@ -393,6 +465,8 @@ print_all_blocks(Dwarf_Debug dbg,
             "0x%" DW_PR_XZEROS DW_PR_DUx "\n",offset_into_debug_info);
         printf("  Size of area in .debug_info section : "
             "%" DW_PR_DUu "\n",size_of_debug_info_area);
+        note_info_errors(i,max_offset,offset_into_debug_info,
+            size_of_debug_info_area);
         printf("  Number of entries in block          : "
             "%" DW_PR_DUu "\n",entrycount);
         /*  The CU offsets appear to be those in
@@ -434,14 +508,13 @@ print_all_blocks(Dwarf_Debug dbg,
                 glflags.gf_count_major_errors++;
             } else {
                 /* Always returns DW_DLV_OK */
-                print_die_basics(dbg, die,
-                    offset_into_debug_info, error);
+                print_die_basics(dbg, die, error);
                 printf("\n");
                 dwarf_dealloc_die(die);
             }
         }
-        res = print_block_entries(dbg,for_pubnames,
-            secname,head,i,entrycount,error);
+        res = print_block_entries(head,i,entrycount,
+            max_offset,error);
         if (res == DW_DLV_ERROR) {
             return res;
         }
@@ -473,6 +546,8 @@ print_debug_gnu(Dwarf_Debug dbg,
     struct esb_s truename;
     unsigned int i = 0;
 
+    printed_infosize_error_a = FALSE;
+    printed_infosize_error_b = FALSE;
     for (i = 0; i < 2; i++) {
         esb_constructor_fixed(&truename,buf,
             DWARF_SECNAME_BUFFER_SIZE);
@@ -503,8 +578,7 @@ print_debug_gnu(Dwarf_Debug dbg,
             " blocks of names\n",
             sanitized(esb_get_string(&truename)),
             block_count);
-        res = print_all_blocks(dbg,for_pubnames,
-            &truename, head,block_count,error);
+        res = print_all_blocks(dbg,head,block_count,error);
         if (res == DW_DLV_ERROR) {
             glflags.gf_count_major_errors++;
             printf("ERROR: problem reading %s. %s\n",

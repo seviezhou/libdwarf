@@ -26,54 +26,43 @@
   Floor, Boston MA 02110-1301, USA.
 */
 
-#include "config.h"
-#include <stdio.h>
-#include "dwarf_incl.h"
+#include <config.h>
+
+#include <stddef.h> /* NULL size_t */
+
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_opaque.h"
+#include "libdwarf_private.h"
+#include "dwarf_util.h"
 #include "dwarf_abbrev.h"
 #include "dwarf_alloc.h"
 #include "dwarf_error.h"
 #include "dwarf_util.h"
-#include "dwarfstring.h"
+#include "dwarf_string.h"
 
-#define TRUE 1
-#define FALSE 0
-
-/*  This is used to print a .debug_abbrev section without
-    knowing about the DIEs that use the abbrevs.
-
-    dwarf_get_abbrev() and,
-    in dwarf_util.c,  _dwarf_get_abbrev_for_code()
-
-
-    When we have a simple .o
-    there is at least a hope of iterating through
-    the abbrevs meaningfully without knowing
-    a CU context.
-
-    This often fails or gets incorrect info
-    because there is no guarantee the .debug_abbrev
-    section is free of garbage bytes.
-
-    In an object with multiple CU/TUs the
-    output is difficult/impossible to usefully interpret.
-
-    In a dwp (Package File)  it is really impossible
-    to associate abbrevs with a CU.
-
-*/
-
+/*  For abbrevs we first count the entries.
+    Actually recording the attr/form/implicit const
+    values happens later. */
 int
 _dwarf_count_abbrev_entries(Dwarf_Debug dbg,
     Dwarf_Byte_Ptr abbrev_ptr,
     Dwarf_Byte_Ptr abbrev_section_end,
     Dwarf_Unsigned *abbrev_count_out,
+    Dwarf_Unsigned *abbrev_implicit_const_count_out,
     Dwarf_Byte_Ptr *abbrev_ptr_out,
     Dwarf_Error *error)
 {
     Dwarf_Unsigned abbrev_count = 0;
+    Dwarf_Unsigned abbrev_implicit_const_count = 0;
     Dwarf_Unsigned attr_name = 0;
     Dwarf_Unsigned attr_form = 0;
-    UNUSEDARG Dwarf_Unsigned implicit_const = 0;
 
     /*  The abbreviations table ends with an entry with a single
         byte of zero for the abbreviation code.
@@ -128,8 +117,10 @@ _dwarf_count_abbrev_entries(Dwarf_Debug dbg,
             return DW_DLV_ERROR;
         }
         if (attr_form ==  DW_FORM_implicit_const) {
-            /* The value is here, not in a DIE. */
-            DECODE_LEB128_SWORD_CK(abbrev_ptr, implicit_const,
+            /*  The value is here, not in a DIE.  We do
+                nothing with it, but must read past it. */
+            abbrev_implicit_const_count++;
+            SKIP_LEB128_CK(abbrev_ptr,
                 dbg,error,abbrev_section_end);
         }
         abbrev_count++;
@@ -137,9 +128,31 @@ _dwarf_count_abbrev_entries(Dwarf_Debug dbg,
         (attr_name != 0 || attr_form != 0));
     /* We counted one too high,we included the 0,0 */
     *abbrev_count_out = abbrev_count-1;
+    *abbrev_implicit_const_count_out = abbrev_implicit_const_count;
     *abbrev_ptr_out = abbrev_ptr;
     return DW_DLV_OK;
 }
+
+/*  dwarf_get_abbrev() is used to print
+    a .debug_abbrev section without
+    knowing about the DIEs that use the abbrevs.
+
+    When we have a simple .o
+    there is at least a hope of iterating through
+    the abbrevs meaningfully without knowing
+    a CU context.
+
+    This often fails or gets incorrect info
+    because there is no guarantee the .debug_abbrev
+    section is free of garbage bytes.
+
+    In an object with multiple CU/TUs the
+    output is difficult/impossible to usefully interpret.
+
+    In a dwp (Package File)  it is really impossible
+    to associate abbrevs with a CU.
+
+*/
 
 int
 dwarf_get_abbrev(Dwarf_Debug dbg,
@@ -154,12 +167,10 @@ dwarf_get_abbrev(Dwarf_Debug dbg,
     Dwarf_Abbrev ret_abbrev = 0;
     Dwarf_Unsigned labbr_count = 0;
     Dwarf_Unsigned utmp     = 0;
+    Dwarf_Unsigned abbrev_implicit_const_count_out = 0;
     int res = 0;
 
-    if (!dbg) {
-        _dwarf_error(NULL, error, DW_DLE_DBG_NULL);
-        return DW_DLV_ERROR;
-    }
+    CHECK_DBG(dbg,error,"dwarf_get_abbrev()");
     if (dbg->de_debug_abbrev.dss_data == 0) {
         /*  Loads abbrev section (and .debug_info as we do those
             together). */
@@ -185,20 +196,14 @@ dwarf_get_abbrev(Dwarf_Debug dbg,
         return DW_DLV_ERROR;
     }
 
-
     *abbr_count = 0;
     if (length) {
         *length = 1;
     }
 
-
     abbrev_ptr = dbg->de_debug_abbrev.dss_data + offset;
     abbrev_section_end =
         dbg->de_debug_abbrev.dss_data + dbg->de_debug_abbrev.dss_size;
-#if 0
-    DECODE_LEB128_UWORD_CK(abbrev_ptr, utmp,
-        dbg,error,abbrev_section_end);
-#endif
     res = _dwarf_leb128_uword_wrapper(dbg,&abbrev_ptr,
         abbrev_section_end,&utmp,error);
     if (res == DW_DLV_ERROR) {
@@ -215,10 +220,6 @@ dwarf_get_abbrev(Dwarf_Debug dbg,
         return DW_DLV_OK;
     }
 
-#if 0
-    DECODE_LEB128_UWORD_CK(abbrev_ptr, utmp,
-        dbg,error,abbrev_section_end);
-#endif
     res = _dwarf_leb128_uword_wrapper(dbg,&abbrev_ptr,
         abbrev_section_end,&utmp,error);
     if (res == DW_DLV_ERROR) {
@@ -226,6 +227,7 @@ dwarf_get_abbrev(Dwarf_Debug dbg,
         return res;
     }
     if (utmp > DW_TAG_hi_user) {
+        dwarf_dealloc(dbg, ret_abbrev, DW_DLA_ABBREV);
         return _dwarf_format_TAG_err_msg(dbg,
             utmp,"DW_DLE_TAG_CORRUPT",
             error);
@@ -233,8 +235,8 @@ dwarf_get_abbrev(Dwarf_Debug dbg,
     ret_abbrev->dab_tag = utmp;
     if (abbrev_ptr >= abbrev_section_end) {
         dwarfstring m;
-        dwarf_dealloc(dbg, ret_abbrev, DW_DLA_ABBREV);
 
+        dwarf_dealloc(dbg, ret_abbrev, DW_DLA_ABBREV);
         dwarfstring_constructor(&m);
         dwarfstring_append_printf_u(&m,
             "DW_DLE_ABBREV_DECODE_ERROR: Ran off the end "
@@ -251,7 +253,9 @@ dwarf_get_abbrev(Dwarf_Debug dbg,
     ret_abbrev->dab_next_ptr = abbrev_ptr;
     ret_abbrev->dab_next_index = 0;
     res = _dwarf_count_abbrev_entries(dbg,abbrev_ptr,
-        abbrev_section_end,&labbr_count,&abbrev_ptr_out,error);
+        abbrev_section_end,&labbr_count,
+        &abbrev_implicit_const_count_out,
+        &abbrev_ptr_out,error);
     if (res == DW_DLV_ERROR) {
         dwarf_dealloc(dbg, ret_abbrev, DW_DLA_ABBREV);
         return res;
@@ -261,6 +265,7 @@ dwarf_get_abbrev(Dwarf_Debug dbg,
     /* Global section offset. */
     ret_abbrev->dab_goffset = offset;
     ret_abbrev->dab_count = labbr_count;
+    ret_abbrev->dab_implicit_count = abbrev_implicit_const_count_out;
     if (abbrev_ptr > abbrev_section_end) {
         dwarf_dealloc(dbg, ret_abbrev, DW_DLA_ABBREV);
         _dwarf_error_string(dbg, error,
@@ -287,7 +292,6 @@ dwarf_get_abbrev_code(Dwarf_Abbrev abbrev,
         _dwarf_error(NULL, error, DW_DLE_DWARF_ABBREV_NULL);
         return DW_DLV_ERROR;
     }
-
     *returned_code = abbrev->dab_code;
     return DW_DLV_OK;
 }
@@ -303,10 +307,9 @@ dwarf_get_abbrev_tag(Dwarf_Abbrev abbrev,
         return DW_DLV_ERROR;
     }
 
-    *returned_tag = abbrev->dab_tag;
+    *returned_tag = (Dwarf_Half)abbrev->dab_tag;
     return DW_DLV_OK;
 }
-
 
 int
 dwarf_get_abbrev_children_flag(Dwarf_Abbrev abbrev,
@@ -322,50 +325,6 @@ dwarf_get_abbrev_children_flag(Dwarf_Abbrev abbrev,
     return DW_DLV_OK;
 }
 
-
-/*  This does not return the implicit const, nor
-    does it return all bits of the uleb attribute
-    nor does it return all bits of the uleb form
-    value.
-    See dwarf_get_abbrev_entry_b().
-*/
-
-int
-dwarf_get_abbrev_entry(Dwarf_Abbrev abbrev,
-    Dwarf_Signed indx,
-    Dwarf_Half   * returned_attr_num,
-    Dwarf_Signed * returned_form,
-    Dwarf_Off    * returned_offset,
-    Dwarf_Error * error)
-{
-    int res;
-    Dwarf_Unsigned attr = 0;
-    Dwarf_Unsigned form = 0;
-    Dwarf_Signed implicitconst = 0;
-    Dwarf_Unsigned uindex = (Dwarf_Unsigned)indx;
-    Dwarf_Bool filter_outliers = TRUE;
-
-    res = dwarf_get_abbrev_entry_b(abbrev,
-        uindex,
-        filter_outliers,
-        &attr,
-        &form,
-        &implicitconst,
-        returned_offset,
-        error);
-    if (res != DW_DLV_OK) {
-        return res;
-    }
-    /* returned_offset already set by dwarf_get_abbrev_entry_b; */
-    if (returned_attr_num) {
-        *returned_attr_num = (Dwarf_Half)attr;
-    }
-    if (returned_form) {
-        *returned_form = (Dwarf_Signed)form;
-    }
-    return DW_DLV_OK;
-}
-
 /*  If filter_outliers is non-zero then
     the routine will return DW_DLV_ERROR
     if the leb reading generates a number that
@@ -378,7 +337,6 @@ dwarf_get_abbrev_entry(Dwarf_Abbrev abbrev,
     have callers examine the return values
     in greater detail than the checking here
     provides.
-
 */
 int
 dwarf_get_abbrev_entry_b(Dwarf_Abbrev abbrev,
@@ -407,11 +365,16 @@ dwarf_get_abbrev_entry_b(Dwarf_Abbrev abbrev,
         return DW_DLV_NO_ENTRY;
     }
 
-    if (abbrev->dab_dbg == NULL) {
-        _dwarf_error(NULL, error, DW_DLE_DBG_NULL);
+    dbg = abbrev->dab_dbg;
+    if (IS_INVALID_DBG(dbg)) {
+        _dwarf_error_string(NULL, error, DW_DLE_DBG_NULL,
+            "DW_DLE_DBG_NULL: "
+            "calling dwarf_get_abbrev_entry_b() "
+            "either null or it contains"
+            "a stale Dwarf_Debug pointer");
         return DW_DLV_ERROR;
     }
-    dbg = abbrev->dab_dbg;
+
     abbrev_ptr = abbrev->dab_abbrev_ptr;
     abbrev_end = dbg->de_debug_abbrev.dss_data +
         dbg->de_debug_abbrev.dss_size;
@@ -479,40 +442,4 @@ dwarf_get_abbrev_entry_b(Dwarf_Abbrev abbrev,
     abbrev->dab_next_ptr = abbrev_ptr;
     abbrev->dab_next_index = (Dwarf_Unsigned)local_indx ;
     return DW_DLV_OK;
-}
-
-/*  This function is not entirely safe to call.
-    The problem is that the DWARF[234] specification does not insist
-    that bytes in .debug_abbrev that are not referenced by .debug_info
-    or .debug_types need to be initialized to anything specific.
-    Any garbage bytes may cause trouble.  Not all compilers/linkers
-    leave unreferenced garbage bytes in .debug_abbrev, so this may
-    work for most objects.
-    In case of error could return a bogus value, there is
-    no documented way to detect error.
-*/
-int
-dwarf_get_abbrev_count(Dwarf_Debug dbg)
-{
-    Dwarf_Abbrev ab;
-    Dwarf_Unsigned offset = 0;
-    Dwarf_Unsigned length = 0;
-    Dwarf_Unsigned attr_count = 0;
-    Dwarf_Unsigned abbrev_count = 0;
-    int abres = DW_DLV_OK;
-    Dwarf_Error err = 0;
-
-    while ((abres = dwarf_get_abbrev(dbg, offset, &ab,
-        &length, &attr_count,
-        &err)) == DW_DLV_OK) {
-
-        ++abbrev_count;
-        offset += length;
-        dwarf_dealloc(dbg, ab, DW_DLA_ABBREV);
-    }
-    if (err) {
-        dwarf_dealloc(dbg,err,DW_DLA_ERROR);
-        err = 0;
-    }
-    return abbrev_count;
 }

@@ -26,25 +26,42 @@ Floor, Boston MA 02110-1301, USA.
 
 */
 
-#include "config.h"
-#include <stdio.h> /* for debugging only. */
-#ifdef HAVE_STDINT_H
-#include <stdint.h> /* For uintptr_t */
-#endif /* HAVE_STDINT_H */
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h> /* For uintptr_t */
-#endif /* HAVE_STDLIB_H */
-#include "dwarf_incl.h"
+#include <config.h>
+
+#include <string.h> /* memcmp() */
+#include <stdio.h> /* printf() debugging */
+
+#if defined(_WIN32) && defined(HAVE_STDAFX_H)
+#include "stdafx.h"
+#endif /* HAVE_STDAFX_H */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dwarf_base_types.h"
+#include "dwarf_opaque.h"
 #include "dwarf_alloc.h"
 #include "dwarf_error.h"
 #include "dwarf_util.h"
-#include "dwarfstring.h"
-
-#define TRUE 1
-#define FALSE 0
+#include "dwarf_string.h"
+#if 0 /* dump_bytes */
+static void
+dump_bytes(const char *msg,int line,
+    Dwarf_Small * start, long len)
+{
+    Dwarf_Small *end = start + len;
+    Dwarf_Small *cur = start;
+    printf("%s (0x%lx) line %d\n ",msg,(unsigned long)start,line);
+    for (; cur < end; cur++) {
+        printf("%02x", *cur);
+    }
+    printf("\n");
+}
+#endif /*0*/
 
 static int
 _dwarf_find_CU_Context_given_sig(Dwarf_Debug dbg,
+    int context_level,
     Dwarf_Sig8 *sig_in,
     Dwarf_CU_Context *cu_context_out,
     Dwarf_Bool *is_info_out,
@@ -96,6 +113,14 @@ _dwarf_find_CU_Context_given_sig(Dwarf_Debug dbg,
                 return DW_DLV_OK;
             }
         }
+        if (context_level > 0) {
+            /*  Make no attempt to create new context,
+                we are finishing cu die base fields
+                on one already.
+                Just look for the other context,
+                DWARF4 debug_types  */
+            continue;
+        }
         if (prev_cu_context) {
             Dwarf_CU_Context lcu_context = prev_cu_context;
             new_cu_offset =
@@ -109,7 +134,7 @@ _dwarf_find_CU_Context_given_sig(Dwarf_Debug dbg,
             new_cu_offset =
                 _dwarf_calculate_next_cu_context_offset(
                 cu_context)) {
-#if 0
+#if 0 /* unnecessary load section call, we think. */
             lres = _dwarf_load_die_containing_section(dbg,
                 is_info,error);
             if (lres == DW_DLV_ERROR) {
@@ -118,10 +143,10 @@ _dwarf_find_CU_Context_given_sig(Dwarf_Debug dbg,
             if (lres == DW_DLV_NO_ENTRY) {
                 continue;
             }
-#endif
+#endif /*0*/
             lres = _dwarf_create_a_new_cu_context_record_on_list(
                 dbg, dis,is_info,section_size,new_cu_offset,
-                &cu_context,error);
+                &cu_context,NULL,error);
             if (lres == DW_DLV_ERROR) {
                 return lres;
             }
@@ -144,8 +169,6 @@ _dwarf_find_CU_Context_given_sig(Dwarf_Debug dbg,
     return DW_DLV_NO_ENTRY;
 }
 
-
-
 /*  We will search to find a CU with the indicated signature
     The attribute leading us here is often
     We are looking for a DW_UT_split_type or DW_UT_type
@@ -159,6 +182,23 @@ dwarf_find_die_given_sig8(Dwarf_Debug dbg,
     Dwarf_Bool *is_info,
     Dwarf_Error *error)
 {
+    int res = 0;
+    CHECK_DBG(dbg,error,"dwarf_find_die_given_sig8()");
+    res = _dwarf_internal_find_die_given_sig8(
+        dbg,0,ref,die_out,is_info,error);
+    return res;
+}
+
+/*  If context level > 0 restrict what we will do
+    to avoid recursion creating CU Contexts */
+int
+_dwarf_internal_find_die_given_sig8(Dwarf_Debug dbg,
+    int context_level,
+    Dwarf_Sig8 *ref,
+    Dwarf_Die  *die_out,
+    Dwarf_Bool *is_info,
+    Dwarf_Error *error)
+{
     int res                   = 0;
     Dwarf_Die ndi             = 0;
     Dwarf_CU_Context context  = 0;
@@ -166,6 +206,7 @@ dwarf_find_die_given_sig8(Dwarf_Debug dbg,
     Dwarf_Unsigned dieoffset  = 0;
 
     res =_dwarf_find_CU_Context_given_sig(dbg,
+        context_level,
         ref, &context, &result_is_info,error);
     if (res != DW_DLV_OK) {
         return res;

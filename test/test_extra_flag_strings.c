@@ -29,19 +29,18 @@
     EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "config.h"
-#include "libdwarf_private.h"
-#include <stdio.h>
-#include <string.h>
-#include <stddef.h>
-#ifdef HAVE_STDINT_H
-#include <stdint.h> /* For uintptr_t */
-#endif /* HAVE_STDINT_H */
-#include "pro_incl.h"
+#include <config.h>
+
+#include <stdio.h>  /* printf() */
+#include <string.h> /* memset() */
+
 #include "dwarf.h"
 #include "libdwarf.h"
-#include "pro_opaque.h"
-#include "dwarfstring.h"
+#include "dwarf_base_types.h"
+#include "libdwarfp.h"
+#include "dwarf_pro_incl.h"
+#include "dwarf_pro_opaque.h"
+#include "dwarf_string.h"
 
 static int errcount;
 
@@ -79,7 +78,7 @@ dbg->de_line_inits.pi_segment_selector_size = (unsigned)v;
 dbg->de_line_inits.pi_segment_size = (unsigned)v;
 #endif /* 0 */
 
-const char *
+static const char *
 returnvalstr(int res)
 {
     if (res == DW_DLV_OK) return "DW_DLV_OK";
@@ -232,12 +231,6 @@ test2(Dwarf_P_Debug dbg)
     check_expected(DW_DLV_OK,res,err,0,
         dbg->de_line_inits.pi_segment_size,9,
         __LINE__);
-
-
-
-
-
-
 }
 
 static void
@@ -267,8 +260,7 @@ test3(Dwarf_P_Debug dbg)
 
 }
 
-
-int main()
+int main(void)
 {
 
     struct Dwarf_P_Debug_s sdbg;

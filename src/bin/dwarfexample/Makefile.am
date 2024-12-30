@@ -1,11 +1,11 @@
 ###Copyright (C) 2018 Vincent Torri <vincent dot torri at gmail dot com
 ###This code is public domain and can be freely used or copied.
 
+AUTOMAKE_OPTIONS=subdir-objects
 MAINTAINERCLEANFILES = Makefile.in
 
-AUTOMAKE_OPTIONS = subdir-objects
-
-bin_PROGRAMS = simplereader frame1 findfuncbypc dwdebuglink
+bin_PROGRAMS = simplereader frame1 findfuncbypc \
+    dwdebuglink  jitreader showsectiongroups
 dwarfbigend=@DWARF_BIGENDIAN@
 
 simplereader_SOURCES = simplereader.c
@@ -30,10 +30,25 @@ findfuncbypc_LDADD = $(top_builddir)/src/lib/libdwarf/libdwarf.la \
 $(DWARF_LIBS)
 
 dwdebuglink_SOURCES = dwdebuglink.c
-dwdebuglink_CPPFLAGS = -I$(top_srcdir)/src/lib/libdwarf \
+dwdebuglink_CPPFLAGS = \
+  -I$(top_srcdir)/src/lib/libdwarf \
   -I$(top_builddir)/libdwarf
 dwdebuglink_CFLAGS = $(DWARF_CFLAGS_WARN)
 dwdebuglink_LDADD = $(top_builddir)/src/lib/libdwarf/libdwarf.la \
+$(DWARF_LIBS)
+
+jitreader_SOURCES = jitreader.c
+jitreader_CPPFLAGS = -I$(top_srcdir)/src/lib/libdwarf \
+  -I$(top_builddir)/src/lib/libdwarf
+jitreader_CFLAGS = $(DWARF_CFLAGS_WARN)
+jitreader_LDADD = $(top_builddir)/src/lib/libdwarf/libdwarf.la \
+$(DWARF_LIBS)
+
+showsectiongroups_SOURCES = showsectiongroups.c
+showsectiongroups_CPPFLAGS = -I$(top_srcdir)/src/lib/libdwarf \
+  -I$(top_builddir)/src/lib/libdwarf
+showsectiongroups_CFLAGS = $(DWARF_CFLAGS_WARN)
+showsectiongroups_LDADD = $(top_builddir)/src/lib/libdwarf/libdwarf.la \
 $(DWARF_LIBS)
 
 EXTRA_DIST = \
@@ -48,7 +63,10 @@ ChangeLog2015 \
 ChangeLog2016 \
 ChangeLog2017 \
 ChangeLog2018 \
+ChangeLog2019 \
+ChangeLog2020 \
 CMakeLists.txt \
+meson.build \
 simplecrc.c \
 NEWS \
 $(dwarfexample_DATA)

@@ -25,9 +25,20 @@ Copyright (C) 2017-2017  David Anderson. All rights reserved.
 
 */
 
-#include "globals.h"
-#include "sanitized.h"
-#include "naming.h"
+#include <config.h>
+
+#include <stdio.h>  /* printf() */
+#include <stdlib.h> /* calloc() free() */
+
+#include "dwarf.h"
+#include "libdwarf.h"
+#include "libdwarf_private.h"
+#include "dd_defined_types.h"
+#include "dd_checkutil.h"
+#include "dd_glflags.h"
+#include "dd_globals.h"
+#include "dd_sanitized.h"
+#include "dd_naming.h"
 
 /*  Two purposes here related to COMDAT:
     A)  get and print the data on sections and groups.
@@ -121,7 +132,7 @@ static struct  glfsetting_s {
     off.  */
 #if 0
 static void
-turn_off_subsidiary_flags(UNUSEDARG Dwarf_Debug dbg)
+turn_off_subsidiary_flags(void)
 {
     Dwarf_Unsigned i = 0;
 
@@ -171,7 +182,6 @@ groups_restore_subsidiary_flags(void)
 #endif
 }
 
-
 /*  NEW May 2017.
     Has a side effect of using the local table set up by
     print_section_groups_data() and then frees the
@@ -184,8 +194,7 @@ groups_restore_subsidiary_flags(void)
     changed.
     */
 void
-update_section_flags_per_groups(
-    UNUSEDARG Dwarf_Debug dbg)
+update_section_flags_per_groups(void)
 {
     if (!sec_names) {
         /*  The tables are absent. Internal logic
@@ -202,7 +211,7 @@ update_section_flags_per_groups(
         return;
     }
 #if 0
-    turn_off_subsidiary_flags(dbg);
+    turn_off_subsidiary_flags();
 #endif
     freeall_groups_tables();
 }
@@ -225,12 +234,11 @@ print_section_groups_data(Dwarf_Debug dbg,Dwarf_Error *error)
             "ERROR: dwarf_sec_group_sizes failed");
         return res;
     }
-    if (group_count == 1 && selected_group ==1 ) {
-        /*  This is the traditional DWARF with no split-dwarf
-            and no COMDAT data.
+    if (group_count == 1 && selected_group == DW_GROUPNUMBER_BASE) {
+        /*  This is the traditional DWARF without
+            dwo sections in a single object.  And no COMDAT data.
             We don't want to print anything as we do not want
-            to see differences from existing output in this case.
-            Simplifies regression testing for now. */
+            to see differences from existing output in this case. */
         return DW_DLV_OK;
     }
     printf("Section Groups data\n");

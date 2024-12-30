@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2018, David Anderson
+Copyright (c) 2018-2023, David Anderson
 All rights reserved.
 
 Redistribution and use in source and binary forms, with
@@ -37,11 +37,8 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 extern "C" {
 #endif /* __cplusplus */
 
-int _dwarf_object_read_random(int fd,char *buf,off_t loc,
-    size_t size,off_t filesize,int *errc);
-
-void  _dwarf_safe_strcpy(char *out, long outlen,
-    const char *in, long inlen);
+int _dwarf_object_read_random(int fd,char *buf,Dwarf_Unsigned loc,
+    Dwarf_Unsigned size,Dwarf_Unsigned filesize,int *errc);
 
 #ifdef __cplusplus
 }

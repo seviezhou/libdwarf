@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2018, David Anderson
+Copyright (c) 2018-2023, David Anderson
 All rights reserved.
 
 Redistribution and use in source and binary forms, with
@@ -45,9 +45,6 @@ extern "C" {
 #define DW_DLV_ERROR 1
 #endif /* DW_DLV_OK */
 
-#define TRUE 1
-#define FALSE 0
-
 #define ALIGN4 4
 #define ALIGN8 8
 
@@ -65,8 +62,8 @@ extern "C" {
 #define P printf
 #define F fflush(stdout)
 
-#define RRMOA(f,buf,loc,siz,fsiz,errc) _dwarf_object_read_random(f, \
-    (char *)buf,loc,siz,fsiz,errc);
+#define RRMOA(f,buf,loc,siz,fsiz,errc) _dwarf_object_read_random(\
+    (f),(char *)(buf),(loc),(siz),(fsiz),(errc));
 
 #ifdef __cplusplus
 }
