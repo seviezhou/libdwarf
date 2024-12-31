@@ -410,6 +410,7 @@ static int print_frame_instrs(Dwarf_Debug dbg,
   for (; i < frame_instr_count; ++i) {
     int res = 0;
     Dwarf_Unsigned instr_offset_in_instrs = 0;
+    Dwarf_Unsigned  offset_frame = 0;
     Dwarf_Small cfa_operation = 0;
     const char *fields = 0;
     Dwarf_Unsigned u0 = 0;
@@ -424,11 +425,11 @@ static int print_frame_instrs(Dwarf_Debug dbg,
 
     expression_block = dwblockzero;
     res = dwarf_get_frame_instruction_a(
-        frame_instr_head, i, &instr_offset_in_instrs, &cfa_operation, &fields,
+        frame_instr_head, i, &instr_offset_in_instrs, &offset_frame, &cfa_operation, &fields,
         &u0, &u1, &u2, &s0, &s1, &code_alignment_factor, &data_alignment_factor,
         &expression_block, error);
     res = dwarf_get_frame_instruction(
-        frame_instr_head, i, &instr_offset_in_instrs, &cfa_operation, &fields,
+        frame_instr_head, i, &instr_offset_in_instrs, &offset_frame, &cfa_operation, &fields,
         &u0, &u1, &s0, &s1, &code_alignment_factor, &data_alignment_factor,
         &expression_block, error);
 

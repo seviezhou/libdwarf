@@ -3022,7 +3022,7 @@ dwarf_get_frame_instruction(Dwarf_Frame_Instr_Head head,
     return dwarf_get_frame_instruction_a(head,
         instr_index,
         instr_offset_in_instrs,
-        offset_frame
+        offset_frame,
         cfa_operation,
         fields_description,
         u0,

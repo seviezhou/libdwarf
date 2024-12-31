@@ -1959,6 +1959,7 @@ print_frame_inst_bytes(Dwarf_Debug dbg,
     for ( ; i < instr_array_len; ++i) {
         int res = 0;
         Dwarf_Unsigned  instr_offset_in_instrs = 0;
+        Dwarf_Unsigned  offset_frame = 0;
         Dwarf_Small     cfa_operation = 0;
         const char     *fields= 0;
         Dwarf_Unsigned  u0 = 0;
@@ -1973,7 +1974,7 @@ print_frame_inst_bytes(Dwarf_Debug dbg,
             printf("  [  ] offset name                 operands\n");
         }
         res = dwarf_get_frame_instruction_a(instr_head,
-            i,&instr_offset_in_instrs, &cfa_operation,
+            i,&instr_offset_in_instrs, &offset_frame, &cfa_operation,
             &fields, &u0,&u1,&u2,&s0,&s1,
             0,0, /* These alignment factors passed to us. */
             &expression_block,&error);

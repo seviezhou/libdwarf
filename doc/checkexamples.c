@@ -2366,6 +2366,7 @@ int examples(Dwarf_Cie cie,
 
     for (i = 0; i < count; ++i) {
         Dwarf_Unsigned  instr_offset_in_instrs = 0;
+        Dwarf_Unsigned  offset_frame = 0;
         Dwarf_Small     cfa_operation          = 0;
         const char     *fields_description     = 0;
         Dwarf_Unsigned  u0 = 0;
@@ -2379,7 +2380,7 @@ int examples(Dwarf_Cie cie,
 
         memset(&expression_block,0,sizeof(expression_block));
         res = dwarf_get_frame_instruction(head,i,
-            &instr_offset_in_instrs,&cfa_operation,
+            &instr_offset_in_instrs,&offset_frame,&cfa_operation,
             &fields_description,&u0,&u1,
             &s0,&s1,
             &code_alignment_factor,
