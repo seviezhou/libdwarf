@@ -1863,7 +1863,7 @@ insert_into_cu_context_list(Dwarf_Debug_InfoTypes dis,
             sizeof(Dwarf_CU_Context*) * (dis->de_cu_context_count - index));
         dis->de_cu_context_array[index] = icu_context;
         ++dis->de_cu_context_count;
-        return;
+        return DW_DLV_OK;
     }
     cur = dis->de_cu_context_list;
     past = 0;
@@ -1887,7 +1887,7 @@ insert_into_cu_context_list(Dwarf_Debug_InfoTypes dis,
                 sizeof(Dwarf_CU_Context*) * (dis->de_cu_context_count - index));
             dis->de_cu_context_array[index] = icu_context;
             ++dis->de_cu_context_count;            
-            return;
+            return DW_DLV_OK;
         }
         past = cur;
         index++;
