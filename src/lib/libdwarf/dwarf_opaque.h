@@ -511,6 +511,7 @@ struct Dwarf_Harmless_s {
     char **  dh_errors;
 };
 
+#define CU_CONTEXT_COUNT_DELTA 128
 /*  Data needed separately for debug_info and debug_types
     as we may be reading both interspersed.  So we always
     select the one we need. */
@@ -523,6 +524,12 @@ struct Dwarf_Debug_InfoTypes_s {
         CU's already read.  These are only CU's read
         by dwarf_next_cu_header(). */
     Dwarf_CU_Context de_cu_context_list;
+    
+    /* for efficient search */
+    Dwarf_CU_Context* de_cu_context_array;
+    unsigned int de_cu_context_count;
+    unsigned int de_cu_context_array_size;
+
     /*  Points to the last CU Context added to the list by
         dwarf_next_cu_header(). */
     Dwarf_CU_Context de_cu_context_list_end;

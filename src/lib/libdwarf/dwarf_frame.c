@@ -3006,6 +3006,7 @@ int
 dwarf_get_frame_instruction(Dwarf_Frame_Instr_Head head,
     Dwarf_Unsigned    instr_index,
     Dwarf_Unsigned  * instr_offset_in_instrs,
+    Dwarf_Unsigned  * offset_frame,
     Dwarf_Small     * cfa_operation,
     const char     ** fields_description,
     Dwarf_Unsigned  * u0,
@@ -3021,6 +3022,7 @@ dwarf_get_frame_instruction(Dwarf_Frame_Instr_Head head,
     return dwarf_get_frame_instruction_a(head,
         instr_index,
         instr_offset_in_instrs,
+        offset_frame
         cfa_operation,
         fields_description,
         u0,
@@ -3037,6 +3039,7 @@ int
 dwarf_get_frame_instruction_a(Dwarf_Frame_Instr_Head head,
     Dwarf_Unsigned    instr_index,
     Dwarf_Unsigned  * instr_offset_in_instrs,
+    Dwarf_Unsigned  * offset_frame,
     Dwarf_Small     * cfa_operation,
     const char     ** fields_description,
     Dwarf_Unsigned  * u0,
@@ -3076,6 +3079,7 @@ dwarf_get_frame_instruction_a(Dwarf_Frame_Instr_Head head,
         return DW_DLV_ERROR;
     }
     *instr_offset_in_instrs = ip->fi_instr_offset;
+    *offset_frame = ip->fi_offset;
     *cfa_operation = ip->fi_op;
     *fields_description = ip->fi_fields;
     *u0 = ip->fi_u0;

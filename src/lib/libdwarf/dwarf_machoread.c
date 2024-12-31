@@ -780,10 +780,10 @@ _dwarf_macho_load_dwarf_sections(
 
         switch (ftype) {
         case MH_DSYM: {
-            if (strcmp(segp->segname,"__DWARF")) {
-                /* No DWARF in this segment */
-                continue;
-            }
+            // object macho file does not have name
+            // if (strcmp(segp->segname,"__DWARF")) {
+            //     continue;
+            // }
             }
             /*  will have DWARF */
             break;
@@ -796,7 +796,8 @@ _dwarf_macho_load_dwarf_sections(
         }
         res = _dwarf_macho_load_dwarf_section_details(mfp,
             segp,segi,errcode);
-        return res;
+        // load all sections, maco object has one but regular has multiple
+        // return res;
     }
     return DW_DLV_OK;
 }
